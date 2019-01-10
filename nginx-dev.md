@@ -192,6 +192,7 @@ struct ngx_command_s {
 };
 ```
 下述为配置项各个成员的含义:
+
 | name | desc |
 | ------ | ------ |
 | name | 配置项在配置文件中使用的名称 |
@@ -201,7 +202,9 @@ struct ngx_command_s {
 | offset | 配置项出现时，将其保存在自定义结构体中的内存偏移量, 主要是为了简化`set`。可用预定宏`offsetof(struct，member)`, 当然若`set`自定义，那么offset无意义 |
 | post | 通常为null |
 
+
 给出了`type`的常用宏，可以通过`|`进行组合功能:
+
 | type | desc |
 | ------ | ------ |
 | NGX_HTTP_MAIN_CONF | 该配置项可出现在http块内(不包含server块) |
