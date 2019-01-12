@@ -94,13 +94,32 @@ $ curl -v -H "Content-type: application/json" -d '{"name":"lsj"}' "http://github
 
 # 九、常用模块
 
-# 九、proxy_pass的一些坑
-## 1.是否重写uri的问题
+# 九、一些常见的问题
+## 1.proxy_pass指令
+### 1).proxy_pass的uri
+proxy_pass的uri写法一般有2种:
+```conf
+location /location-uri {
+    # 配置1: 忽略uri
+    proxy_pass http://server;
 
-## 2.cookie丢失问题
+    # 配置2: 写明uri
+    proxy_pass http://server/pass-uri;
+}
+```
+这2者有较大的区别:
+* 配置1, 忽略uri的情况下，会使用request自身的uri
+* 配置2, 写明uri的情况下，会使用指定的uri
 
-## 3.uri被重定向到斜杠后缀的问题
+### 2).cookie丢失问题
+有一次在使用proxy_pass时，发生了RS没有拿到对应cookie的问题，但是从chorme-dev-tools中又观察到cookie实际上是发送出去了的。这有可能是nginx关掉了对于headers的转发，检查配置文件后，发行在server块中配置了`proxy_pass_request_headers      off;`, 这将会导致header不会被转发到代理服务器，进而丢失cookie。该配置项，默认是`on`。
 
-# 十、upstream的节点在线检查
+### 3).`uri`重定向`uri/`的问题
 
-# 十一、set指令的一些问题
+## 2.set指令
+### 1).if语句块的生效顺序问题
+
+## 3.upstream语句块
+### 1).*节点在线检测*
+
+
