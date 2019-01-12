@@ -122,9 +122,3 @@ location /location-uri {
 
 ## 3.upstream语句块
 ### 1).*节点在线检测*
-
-
-<<<<<<< HEAD
-=======
-# 十一、set指令的一些问题
->>>>>>> 04599fd04c90a8b4810d385ad449eb3822e8390b
