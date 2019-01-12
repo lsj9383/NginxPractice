@@ -2,10 +2,11 @@
 
 # 二、内置变量
 下面只列出的本人使用过的内置Nginx变量，其他内置变量并未列出，将会根据本人情况持续更新。更全面的内置变量可以看[官方文档](http://nginx.org/en/docs/varindex.html)。
+
 | var | desc |
-| :------: | :------: |
+| :------: | :------ |
 | $request | 整个原始请求行 |
-| $request_body | 请求的body, location中用到proxy_pass,fastcgi_pass,scgi_pass命令时，该变量才有值，否则为空字符串 |
+| $request_body | 请求的body, location中用到proxy_pass,fastcgi_pass,scgi_pass命令时该变量才有值，否则为空串 |
 | $request_uri | 请求uri(不包含协议和域名，但是包含查询字符串), 不会受rewrite影响 |
 | $request_method | 请求的方法，比如"GET"、"POST"等 |
 | $uri | 请求uri(不包含协议、域名和查询字符串), 若经过了rewrite, 则$uri是rewrite后的值 |
@@ -123,3 +124,7 @@ location /location-uri {
 ### 1).*节点在线检测*
 
 
+<<<<<<< HEAD
+=======
+# 十一、set指令的一些问题
+>>>>>>> 04599fd04c90a8b4810d385ad449eb3822e8390b
