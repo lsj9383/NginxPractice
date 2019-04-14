@@ -113,7 +113,7 @@ location /location-uri {
 * 配置2, 写明uri的情况下，会使用指定的uri
 
 ### 2).cookie丢失问题
-有一次在使用proxy_pass时，发生了RS没有拿到对应cookie的问题，但是从chorme-dev-tools中又观察到cookie实际上是发送出去了的。这有可能是nginx关掉了对于headers的转发，检查配置文件后，发行在server块中配置了`proxy_pass_request_headers      off;`, 这将会导致header不会被转发到代理服务器，进而丢失cookie。该配置项，默认是`on`。
+有一次在使用proxy_pass时，发生了RS没有拿到对应cookie的问题，但是从chorme-dev-tools中又观察到cookie实际上是发送出去了的。这有可能是nginx关掉了对于headers的转发，检查配置文件后，发行在server块中配置了`proxy_pass_request_headers off;`, 这将会导致header不会被转发到代理服务器，进而丢失cookie。该配置项，默认是`on`。
 
 ### 3).`uri`重定向`uri/`的问题
 
@@ -122,3 +122,15 @@ location /location-uri {
 
 ## 3.upstream语句块
 ### 1).*节点在线检测*
+
+## 4.rewrite指令
+rewrite可以在server/location/if语句块中使用。
+* 指令格式:
+    * `rewrite regex replacement [flag];`, 当请求的uri和`regex`匹配时，uri将会被改写为`replacement`。
+
+### 1).flag
+rewrite可以支持4中flag:
+* last(default), 将uri改变为replacement，并在location中重新到进行rewrite。
+* break, 将uri改变为replacement，并在location中重新到进行rewrite，若该location已经进行过一次rewrite则该location不再进行rewrite。
+* redirect, 产生一个302重定向的响应，让浏览器跳到replacement。
+* permanent, 产生一个301重定向的响应，让浏览器跳到replacement。301为永久重定向，一般是为了SEO。
