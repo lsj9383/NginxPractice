@@ -173,12 +173,22 @@ static ngx_int_t postconfiguration(ngx_conf_t *cf){
     * `ngx_list_t`
     * `ngx_table_elt_t`
     * `ngx_buf_t`
-* `ngx_command_t`
-* `ngx_http_module_t`
-* `ngx_module_t`
-* `ngx_conf_t`
+* 第三方模块结构
+    * `ngx_command_t`
+    * `ngx_http_module_t`
+    * `ngx_module_t`
+    * `ngx_conf_t`
 
-## 1.*ngx_command_s*
+## 3.1 基础结构
+### 3.1.1 *ngx_str_t*
+
+### 3.1.2 *ngx_list_t*
+### 3.1.3 *ngx_table_elt_t*
+### 3.1.4 *ngx_buf_t*
+
+## 3.2 第三方模块结构
+
+### 3.2.1 *ngx_command_t*
 用来定义一个模块的配置项，以及这个配置项的解析和存储方式
 ```c
 typedef struct ngx_command_s ngx_command_t;
@@ -215,7 +225,7 @@ struct ngx_command_s {
 | NGX_CONF_TAKE2 | 可以携带2个参数 |
 | NGX_CONF_TAKE12 | 可以携带1或者2个参数 |
 
-## 2.*ngx_http_module_t*
+### 3.2.2.*ngx_http_module_t*
 ```c
 typedef struct {
     /*配置解析前*/

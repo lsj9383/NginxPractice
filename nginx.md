@@ -1,7 +1,56 @@
 # 一、Nginx概述
+由于本人的Linux为CentOS, 因此相关命令和配置项仅限于CentOS。国内常用的Nginx及相关package:
+* Nginx开源: http://nginx.org/
+* Nginx商业版: https://www.nginx.com/
+* openresty, 一个基于Nginx基础上进行了lua等相关模块的扩展
+* tengine, 基于Nginx重构的一个框架，对Nginx本身的变更较大。
+
+下载Nginx的安装包:
+```sh
+wget -c https://nginx.org/download/nginx-1.10.1.tar.gz
+```
+
+安装Nginx前通常需要安装相关依赖, 可以直接使用该命令进行安装:
+```sh
+yum -y install gcc g++ automake pcre-devel pcre zlib-devel zlib openssl-devel
+```
+* gcc/g++, c/c++的编译器, 用于编译ngx源码
+* pcre/pcre-devel, ngx使用该库支持正则表达式解析
+* zlib/zlib-devel, ngx响应进行gzip压缩的库
+* openssl-devel, 用于支持HTTPS的库
+* automake, 通常一些第三方模块可能会用到
+
+## 1.1 构建的常用参数
+* `--prefix=path`
+* `--user=name`, 设置ngx的worker所属用户, 默认用户为nobody, 如果没有进行配置可能会导致无法访问等权限问题。也可以在ngx的配置文件中配置。
+* `--group=name`, 设置ngx的worker所属组, 默认为非root的用户组。也可以在ngx的配置文件中配置。
+* `--with-http_ssl_module`, 启用ssl, 默认未开启, 若不开启则无法使用https。
+* `--with-http_v2_module`, 启用http 2.0, 默认未开启。
+
+常用构建命令:
+```sh
+# 通用ngx
+./configure --prefix=/home/user00/bin/openresty \
+            --with-http_ssl_module \
+            --without-http_redis2_module \
+            --with-http_iconv_module \
+            --with-http_postgres_module \
+            --add-module=${module_dir}
+
+# openresty
+./configure --prefix=/home/user00/bin/openresty \
+            --with-http_ssl_module \
+            --with-luajit \
+            --without-http_redis2_module \
+            --with-http_iconv_module \
+            --with-http_postgres_module \
+            --add-module=${module_dir}
+```
+
+## 1.2 Nginx安装包目录
 
 # 二、内置变量
-下面只列出的本人使用过的内置Nginx变量，其他内置变量并未列出，将会根据本人情况持续更新。更全面的内置变量可以看[官方文档](http://nginx.org/en/docs/varindex.html)。
+下面只列出的本人使用过的内置Nginx变量，其他内置变量并未列出，将会根据本人情况持续更新。更全面的内置变量可以看官方文档: [Alphabetical index of variables](http://nginx.org/en/docs/varindex.html)。
 
 | var | desc |
 | :------: | :------ |
@@ -44,15 +93,26 @@ $ curl -v -H "Content-type: application/json" -d '{"name":"lsj"}' "http://github
 * $is_args为`?`
 
 # 三、常用配置
-下面会列出每个语句块中的常用配置。
+下面会列出每个语句块中的常用配置。更全面的配置可以看官方文档: [Alphabetical index of directives](http://nginx.org/en/docs/dirindex.html)
 
-## 1.全局配置
-## 2.events块配置
-## 3.http块配置
-## 4.server块配置
-## 5.upstream块配置
-## 6.location块配置
-## 7.if语句块
+## 3.1.main配置
+```
+Syntax: user user [group];
+Default: user nobody nobody;
+Context: main
+```
+
+## 3.2.events块配置
+
+## 3.3.http块配置
+
+## 3.4.server块配置
+
+## 3.5.upstream块配置
+
+## 3.6.location块配置
+
+## 3.7.if语句块
 
 ## 7.配置Demo
 ### 1).*目录树*
