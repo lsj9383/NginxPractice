@@ -170,7 +170,7 @@ location /location-uri {
 ```
 这2者有较大的区别:
 * 配置1, 忽略uri的情况下，会使用request自身的uri
-* 配置2, 写明uri的情况下，会使用指定的uri
+* 配置2, 写明uri的情况下(包括一个/)，会从request自身的uri中剔除掉匹配部分的uri, 再拼接到proxy_pass的后面。因此如果使用了正则方式匹配uri，则该配置禁止使用(ngx加载配置报错)。
 
 ### 2).cookie丢失问题
 有一次在使用proxy_pass时，发生了RS没有拿到对应cookie的问题，但是从chorme-dev-tools中又观察到cookie实际上是发送出去了的。这有可能是nginx关掉了对于headers的转发，检查配置文件后，发行在server块中配置了`proxy_pass_request_headers off;`, 这将会导致header不会被转发到代理服务器，进而丢失cookie。该配置项，默认是`on`。
