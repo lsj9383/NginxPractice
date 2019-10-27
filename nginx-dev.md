@@ -142,7 +142,7 @@ http {
 
 ## 3.模块处理函数挂载
 模块定义好后，上下文的内容也创建好了，解析方式也有了，接着就是http请求来了以后，请求到了某个阶段，将会触发模块对请求进行处理。在指定阶段对请求进行处理，需要将模块的处理函数挂载到对应的阶段上。
-### 1.*`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*
+### 3.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*
 该方案在配置命令的set回调函数中, 进行挂载, 只适合于`NGX_HTTP_CONTENT_PHASE`。
 ```c
 static char* ngx_http_example_set_func(ngx_conf_t *cf,ngx_command_t *cmd,void *conf){
@@ -152,7 +152,7 @@ static char* ngx_http_example_set_func(ngx_conf_t *cf,ngx_command_t *cmd,void *c
 }
 ```
 
-### 2.*通用挂载方案*
+### 3.2 *通用挂载方案*
 所有的可挂载点，都可以在上下文配置解析完毕后进行挂载，即通过`ngx_int_t   (*postconfiguration)(ngx_conf_t *cf)`回调:
 ```c
 //该函数用于挂载到日志阶段，执行mylog模块的逻辑
@@ -175,6 +175,13 @@ static ngx_int_t postconfiguration(ngx_conf_t *cf){
     return NGX_OK;
 }
 ```
+
+### 3.3 *处理器返回值*
+挂载在各个Phase上的Handler有着多种可能的返回值，每种返回值的意义以及ngx的处理方式并不相同：
+* NGX_OK, 处理成功, ngx会引导请求进入下一个Phase
+* NGX_DECLINED, 处理成功, ngx会引动请求进入该Phase的下一个Handler, 若这是最后一个Handler则进入下一个Phase
+* NGX_AGAIN, NGX_DONE, 在该阶段挂起, 当事件触发时(如io或者延时)ngx重新执行handler
+* 其他值则直接认为是响应的状态码, 将会直接终止Handler, 并返回该状态码。
 
 # 三、Nginx重要结构体梳理
 
