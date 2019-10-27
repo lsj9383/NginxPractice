@@ -6,6 +6,15 @@ Nginx模块开发主要聚焦于对HTTP模块的开发，而HTTP模块的开发�
 
 在开始前，需要明确一点，配置的解析仅仅存在于nginx启动(或热加载)时。当配置加载完毕后，每个模块对应的每个语句块的配置相关数据都已经保存在内存中了，当请求到的时候，根据其所处的阶段，可以获取相应的配置信息，以对其进行处理。
 
+## 1.1 Nginx函数返回值
+* NGX_OK — 操作成功
+* NGX_ERROR — 操作失败
+* NGX_AGAIN — 操作未完成, 需要再次调用
+* NGX_DECLINED — 操作被拒绝, 通比如在配置文件中配置disable, 这通常不是一个错误
+* NGX_BUSY — 资源不可用
+* NGX_DONE — 操作完成并继续其他操作, 这是一种成功。
+* NGX_ABORT — 操作终断，这是一种错误。
+
 # 二、模块开发步骤
 ## 1.配置项命令
 需要确定有一些什么配置项，以及保存配置项的结构体，nginx启动的时候进行解析，并将相关的数据保存到结构体中。
@@ -168,25 +177,143 @@ static ngx_int_t postconfiguration(ngx_conf_t *cf){
 ```
 
 # 三、Nginx重要结构体梳理
-* 基础结构
-    * `ngx_str_t`
-    * `ngx_list_t`
-    * `ngx_table_elt_t`
-    * `ngx_buf_t`
-* 第三方模块结构
-    * `ngx_command_t`
-    * `ngx_http_module_t`
-    * `ngx_module_t`
-    * `ngx_conf_t`
 
 ## 3.1 基础结构
 ### 3.1.1 *ngx_str_t*
+nginx字符串通常使用ngx_str_t, 该结果包含了字符数组以及字符串长度。
+```c
+typedef struct {
+    size_t      len;
+    u_char     *data;
+} ngx_str_t;
+```
+ngx_str_t.data并未限制终止字符是什么, 但是在某些配置文件解析的代码中是假定了NULL终止符, 目的是为了简化字符串比较, 并方便传递给系统调用。
 
-### 3.1.2 *ngx_list_t*
-### 3.1.3 *ngx_table_elt_t*
-### 3.1.4 *ngx_buf_t*
+* 字符串的基本操作
+    * ngx_strcmp()
+    * ngx_strncmp()
+    * ngx_strstr()
+    * ngx_strlen()
+    * ngx_strchr()
+    * ngx_memcmp()
+    * ngx_memset()
+    * ngx_memcpy()
+    * ngx_memmove()
+* 字符串转化及比较
+    * ngx_tolower()
+    * ngx_toupper()
+    * ngx_strlow()
+    * ngx_strcasecmp()
+    * ngx_strncasecmp()
+* 字符串初始化
+    * ngx_string()
+    * ngx_null_string()
+    * ngx_str_set()
+    * ngx_str_null()
+* 格式化操作
+    * ngx_sprintf(buf, fmt, ...)
+    * ngx_snprintf(buf, max, fmt, ...)
+    * ngx_slprintf(buf, last, fmt, ...)
+    * ngx_vslprintf(buf, last, fmt, args)
+    * ngx_vsnprintf(buf, max, fmt, args)
 
-## 3.2 第三方模块结构
+### 3.1.2 *ngx_array_t*
+ngx的动态数组数组。
+```c
+typedef struct {
+    void        *elts;      // array中的元素
+    ngx_uint_t   nelts;     // array中的元素个数
+    size_t       size;      // 单个元素的大小
+    ngx_uint_t   nalloc;    // array的容量, 当超过最大容量, 则重新分配一个新的数组, 并把数据从老的数组移动到新的数组, nalloc翻番
+    ngx_pool_t  *pool;
+} ngx_array_t;
+```
+
+* array = ngx_array_create(pool, n, size), 从pool中分配内存创建n个元素，每个元素大小为size
+* ngx_array_init(array, pool, n, size), 对array进行初始化
+* ngx_array_push(array), 在array的尾部创建一个元素, 并返回该元素的指针
+* ngx_array_push_n(array, n), 在array的第n个位置插入一个元素， 并返回该元素的指针
+
+### 3.1.3 *ngx_list_t*
+ngx的链表。
+```c
+typedef struct ngx_list_part_s  ngx_list_part_t;
+
+// 链表节点, 每个链表节点都是一个数组
+struct ngx_list_part_s {
+    void             *elts;             // 当前节点的数组首地址
+    ngx_uint_t        nelts;            // 当前节点的数组元素个数
+    ngx_list_part_t  *next;             // 下一个节点
+};
+
+typedef struct {
+    ngx_list_part_t  *last;             // 链表的最后一个元素的指针
+    ngx_list_part_t   part;             // 链表的首个元素
+    size_t            size;             // 链表节点中每个元素的大小
+    ngx_uint_t        nalloc;           // 每个链表节点中的数组最大元素个数
+    ngx_pool_t       *pool;
+} ngx_list_t;
+```
+这个结构可以无限制的往链表中添加元素, 当每个节点的元素个数满了以后，则会添加一个新的链表节点。`ngx_list_t`主要用于记录http的headers, 该结构不能进行元素删除, 但是可以标记元素缺失。
+
+* ngx_list_create(pool, n, size), 从pool中创建ngx_list_t, size是每个元素的大小, n是每个链表节点的数组可容纳的元素个数(即nalloc)。
+* ngx_list_init(list, pool, n, size), 和create类似, 但需要已经创建好的list
+* ngx_list_push(list), 往list中添加一个新元素, 并返回该元素.
+
+### 3.1.4 *ngx_queue_s*
+```c
+struct ngx_queue_s {
+    ngx_queue_t  *prev;
+    ngx_queue_t  *next;
+};
+```
+
+### 3.1.5 *rbtree*
+```c
+typedef struct {
+    ngx_rbtree_t       rbtree;
+    ngx_rbtree_node_t  sentinel;
+
+    /* custom per-tree data here */
+} my_tree_t;
+
+typedef struct {
+    ngx_rbtree_node_t  rbnode;
+
+    /* custom per-node data */
+    foo_t              val;
+} my_node_t;
+```
+
+### 3.1.6 *ngx_table_elt_t*
+一个keyvalue条目
+```c
+typedef struct {
+    ngx_uint_t        hash;             // key的hash值, 方便在ngx_hash_t中使用
+    ngx_str_t         key;
+    ngx_str_t         value;
+    u_char           *lowcase_key;
+} ngx_table_elt_t;
+```
+
+### 3.1.7 *ngx_buf_t*
+
+## 3.2 内存管理
+### 3.2.1 Heap
+* p = ngx_alloc(size, log), 从堆中初始化一个大小为size的内存
+* p = ngx_calloc(size, log), 和ngx_alloc类似, 但会初始化空间中的所有数据为NULL
+* ngx_free(p), 释放内存
+
+### 3.2.2 Pool
+ngx使用的内存通常都是来自于pool, 当pool被销毁时来自pool申请的内存也均会被自动销毁。这让内存控制变得更容易。pool在内部连续内存块中分配对象，当一个内存块写满时，就会申请一个新的内存块，并把新的内存块添加到pool的内存块列表中。
+* pool = ngx_create_pool(size, log), 创建一个指定内存大小的size, size至少为NGX_MIN_POOL_SIZE，且应该是NGX_POOL_ALIGNMENT的倍数。
+* ngx_pcalloc(pool, size), 从pool中创建一个指定大小的内存，且内存中的所有数据为NULL。
+* ngx_destroy_pool(pool), 释放所有内存。
+
+### 3.2.3 共享内存
+共享内存中的数据在ngx的多个进程之间共享，适合做公共缓存使用。
+
+## 3.3 第三方模块结构
 
 ### 3.2.1 *ngx_command_t*
 用来定义一个模块的配置项，以及这个配置项的解析和存储方式

@@ -10,5 +10,6 @@
 * [OpenResty最佳实践](https://moonbingbing.gitbooks.io/openresty-best-practices/)
 * [agentzh的Nginx教程](http://openresty.org/download/agentzh-nginx-tutorials-zhcn.html)
 * [lua-nginx-module](https://github.com/openresty/lua-nginx-module)
+* [Nginx官方开发文档](http://nginx.org/en/docs/dev/development_guide.html)
 * [深入理解Nginx模块开发与架构解析]()
 * [Nginx高性能Web服务器详解]()
