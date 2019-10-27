@@ -28,6 +28,9 @@
     - [五、模块开发步骤](#五模块开发步骤)
         - [5.1.配置项命令](#51配置项命令)
         - [5.2 模块上下文](#52-模块上下文)
+    - [六、模块构建](#六模块构建)
+        - [6.1 模块准备](#61-模块准备)
+        - [6.2 模块编译](#62-模块编译)
 
 <!-- /TOC -->
 
@@ -424,4 +427,30 @@ ngx_module_t ngx_http_mytest_module = {
     NULL,
     NGX_MODULE_V1_PADDING
 };
+```
+
+## 六、模块构建
+### 6.1 模块准备
+一个第三方模块通常是一个目录，包含一个config文件和源码文件:
+* config, 用于告诉Nginx当前模块的信息, 以及如何编译当前模块
+* 源码文件即第三方模块源代码, 在第三方模块中会定义模块、命令、handler等。
+
+config文件通常是对变量进行定义:
+* ngx_addon_name, 尽在configure执行期间使用, 通常是模块名称
+* HTTP_MODULES, 保存所有HTTP模块的名称, 模块间用空格分别。一定不能直接覆盖HTTP_MODULES。
+* NGX_ADDON_SRCS, 用于指定新增的模块代码, 多个带编译的换代码用空格符相连。一定不能直接覆盖NGX_ADDON_SRCS。
+```sh
+ngx_addon_name=${module_name}
+HTTP_MODULES="$HTTP_MODULES ${ngx_addon_name}"
+NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/$src_file"
+```
+`${module_name}`和`${src_file}`需要第三方模块进行填写
+
+### 6.2 模块编译
+当模块目录准备好后, 需要将模块二进制文件编译到ngx中, 这需要重新编译
+```sh
+$ ./configure ... \
+            --add-module=${module_dir}
+
+$ make && make install
 ```
