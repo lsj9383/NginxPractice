@@ -32,9 +32,6 @@ yum -y install gcc g++ automake pcre-devel pcre zlib-devel zlib openssl-devel
 # 通用ngx
 ./configure --prefix=/home/user00/bin/openresty \
             --with-http_ssl_module \
-            --without-http_redis2_module \
-            --with-http_iconv_module \
-            --with-http_postgres_module \
             --add-module=${module_dir}
 
 # openresty
