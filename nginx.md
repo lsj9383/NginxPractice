@@ -92,24 +92,52 @@ $ curl -v -H "Content-type: application/json" -d '{"name":"lsj"}' "http://github
 # 三、常用配置
 下面会列出每个语句块中的常用配置。更全面的配置可以看官方文档: [Alphabetical index of directives](http://nginx.org/en/docs/dirindex.html)
 
-## 3.1.main配置
+## 3.1 基础相关
 ```
 Syntax: user user [group];
 Default: user nobody nobody;
 Context: main
 ```
 
-## 3.2.events块配置
+## 3.2 性能优化相关
+* `accept_mutex`，worker在accept前是否进行上锁的标识，默认为off。
+    * 如果打开，nginx的worker会在accept前申请锁，新连接来的时候只会有一个worker被唤醒。
+    * 如果关闭，新连接会让所有worker都被唤醒，即惊群。
+    * 互联网高并发业务一般都是关闭，即允许惊群。一方面是 nginx 的 worker 不会很多，惊群影响不大，另一方面高并发有大量的连接进行建立，需要尽可能多的worker去获取连接，避免阻塞。
+* `multi_accept`，目前默认是off。
+    * 如果关闭，worker 一次只会 accept 一个 socket，
+    * 如果打开，worker 一次会把 accept queue 中的 socket 全部取出。
+    * 高并发的情况下，如果不能及时accept，会导致socket挤压，甚至被拒绝连接。高并发条件下需要及时清空accept queue。所以我们一般配置为on。
 
-## 3.3.http块配置
+## 3.3 证书相关
 
-## 3.4.server块配置
+## 3.4 限速相关
+* `limit_req_zone key zone=name:size rate=rate [sync]`，key是指的对这个变量的出现速率进行限制；zone标识存储区域以及存储区域大小（其实就是漏桶的大小），超出漏洞的部分将会被拒绝；rate指的是具体速率。
+* `limit_req zone=name [burst=number]` 关联到漏桶，受到漏桶流出速率的限制。burst用于处理突发流量。
+* http://nginx.org/en/docs/http/ngx_http_limit_req_module.html
 
-## 3.5.upstream块配置
+下面是一个对 URI 进行限速的 dmo:
+```conf
+http {
+    limit_req_zone $uri zone=webapi:10m rate=500r/s;
 
-## 3.6.location块配置
+    server {
+        location ~ /webapi/.+ {
+            limit_req zone=webapi burst=1000;
+            proxy_pass http://upstream_server;
+        }
+    }
+}
+```
 
-## 3.7.if语句块
+## 3.5 超时相关
+* proxy_connect_timeout, Nginx 和 upsteam 的节点建立连接所用的超时时间，即当超过这个时间都没有建立好连接就放弃，直接返回客户端失败。
+* proxy_send_timeout, Nginx 向 upstream 的节点两次成功写的超时时间，超时后 nginx 直接断开连接。
+    * 一般业务后台压力过大，无法及时处理请求，也就没法及时从 socket 读取数据，这样 nginx 的写行为就会超时，断开链接。
+    * 写等待时间超过了该时间，意味着两次成功读之间的时间一定超过该时间
+* proxy_read_timeout, Nginx 从 upstream 的节点两次成功读的超时时间，超时后 nginx 直接断开连接。
+    * nginx 将数据全部传给后台后，后台的处理耗时过长，nginx 的 socket 等待时间超过了该时间就会超时，断开连接。
+    * 读等待时间超过了该时间，意味着两次成功读之间的时间一定超过该时间
 
 ## 7.配置Demo
 ### 1).*目录树*
