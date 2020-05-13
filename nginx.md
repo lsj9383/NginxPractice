@@ -152,11 +152,11 @@ Syntax: proxy_cache_path path [levels=levels] [use_temp_path=on|off] keys_zone=n
 Default: —
 Context: http
 ```
+其中的参数如下：
     * path，指定缓存数据在磁盘中的落盘目录
     * levels=levels，数据在磁盘中的存储路径位 /${path}/${key}, key 是一个 MD5 值，levels 将 key 部分切分位多个部分，每个部分是一个目录。levels最多有3级，即最多有3个目录。
     * `use_temp_path=on|off`，所有的数据在落盘前都是存放在临时文件中的，如果`user_temp_path=on`则使用用户自定义的临时文件目录，由`proxy_temp_path`指定用户的临时文件目录。如果为off，则临时文件目录即缓存目录。
-    * `keys_zone=name:size`，指定缓存的共享内存空间，共享内存空间在多进程之间共享被缓存的key，ngx会先在共享内存中判断请求的key是否存在，如果存在则到磁盘中获取数据。size是共享内存空间。
-    * `inactive=time`，当 key 在 time 时间范围内都没有，该 key 所对应的文件将会从磁盘中移除。即便该 key 还未到过期时间。
+    * `keys_zone=name:size`，指定缓存的共享内存空间，共享内存空间在多进程之间共享被缓存的key，ngx会先在共享内存中判断请求的key是否存在，如果存在则到磁盘中获取数据。size是共享内存空间。* `inactive=time`，当 key 在 time 时间范围内都没有，该 key 所对应的文件将会从磁盘中移除。即便该 key 还未到过期时间。
     * `cache manager`，nginx将会启动一个 cache manager 进程，该进程的目的是定期检查缓存文件是否需要清理。
         * `max_size=size`，max_size参数设置的最大缓存大小。当超过此大小时，cache manager 进程将删除最近最少使用的数据。
         * `manager_files=number`，每次处理不超过number个文件。
