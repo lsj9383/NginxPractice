@@ -147,16 +147,16 @@ Nginx 常用的缓存方式为 Nginx Proxy，其原理相对简单：
 
 缓存相关的命令如下：
 * proxy_cache_path，指定缓存的目录、key的共享内存名称大小、缓存时间等。
-```
-Syntax: proxy_cache_path path [levels=levels] [use_temp_path=on|off] keys_zone=name:size [inactive=time] [max_size=size] [manager_files=number] [manager_sleep=time] [manager_threshold=time] [loader_files=number] [loader_sleep=time] [loader_threshold=time]
-Default: —
-Context: http
-```
-其中的参数如下：
+    ```
+    Syntax: proxy_cache_path path [levels=levels] [use_temp_path=on|off] keys_zone=name:size [inactive=time] [max_size=size] [manager_files=number] [manager_sleep=time] [manager_threshold=time] [loader_files=number] [loader_sleep=time] [loader_threshold=time]
+    Default: —
+    Context: http
+    ```
     * path，指定缓存数据在磁盘中的落盘目录
     * levels=levels，数据在磁盘中的存储路径位 /${path}/${key}, key 是一个 MD5 值，levels 将 key 部分切分位多个部分，每个部分是一个目录。levels最多有3级，即最多有3个目录。
     * `use_temp_path=on|off`，所有的数据在落盘前都是存放在临时文件中的，如果`user_temp_path=on`则使用用户自定义的临时文件目录，由`proxy_temp_path`指定用户的临时文件目录。如果为off，则临时文件目录即缓存目录。
-    * `keys_zone=name:size`，指定缓存的共享内存空间，共享内存空间在多进程之间共享被缓存的key，ngx会先在共享内存中判断请求的key是否存在，如果存在则到磁盘中获取数据。size是共享内存空间。* `inactive=time`，当 key 在 time 时间范围内都没有，该 key 所对应的文件将会从磁盘中移除。即便该 key 还未到过期时间。
+    * `keys_zone=name:size`，指定缓存的共享内存空间，共享内存空间在多进程之间共享被缓存的key，ngx会先在共享内存中判断请求的key是否存在，如果存在则到磁盘中获取数据。size是共享内存空间。
+    * `inactive=time`，当 key 在 time 时间范围内都没有，该 key 所对应的文件将会从磁盘中移除。即便该 key 还未到过期时间。
     * `cache manager`，nginx将会启动一个 cache manager 进程，该进程的目的是定期检查缓存文件是否需要清理。
         * `max_size=size`，max_size参数设置的最大缓存大小。当超过此大小时，cache manager 进程将删除最近最少使用的数据。
         * `manager_files=number`，每次处理不超过number个文件。
@@ -166,64 +166,63 @@ Context: http
         * `loader_files=number`，每次加载的文件数量。
         * `loader_threshold=time`，每次加载不超过time耗时。
         * `loader_sleep=time`，两次加载的时间间隔。
-
-除去上述配置外，还有 purger 的配置，用于控制缓存文件的清理，这是商业项目支持的配置，这里暂不给出。
+    * 除去上述配置外，还有 purger 的配置，用于控制缓存文件的清理，这是商业项目支持的配置，这里暂不给出。
 * proxy_cache，定义请求在该上下文中使用的缓存区域，该区域名和 proxy_cache_path 中的 keys_zone 对应。通过这个方式将请求的缓存和 proxy_cache_path 指定的缓存区域关联起来。
-```
-Syntax:	proxy_cache zone | off;
-Default: proxy_cache off;
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_cache zone | off;
+    Default: proxy_cache off;
+    Context: http, server, location
+    ```
 *  proxy_cache_valid，设置了对于不同响应状态码的数据缓存时间。该指令必须要配置，否则无法成功缓存。如果code没有填写，则只对 200 301 302 的响应进行缓存。如果code为any则对所有响应进行缓存。
-```
-Syntax:	proxy_cache_valid [code ...] time;
-Default:	—
-Context:	http, server, location
-```
+    ```
+    Syntax:	proxy_cache_valid [code ...] time;
+    Default:	—
+    Context:	http, server, location
+    ```
 * proxy_cache_key，定义请求的 key，当请求的 key  被缓存时，直接返回请求对应的内容。
-```
-Syntax:	proxy_cache_key string;
-Default: proxy_cache_key $scheme$proxy_host$request_uri;
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_cache_key string;
+    Default: proxy_cache_key $scheme$proxy_host$request_uri;
+    Context: http, server, location
+    ```
 * proxy_cache_methods，指定的会进行缓存的请求需要满足的HTTP方法。
-```
-Syntax:	proxy_cache_methods GET | HEAD | POST ...;
-Default:	
-proxy_cache_methods GET HEAD;
-Context:	http, server, location
-This directive appeared in version 0.7.59.
-```
+    ```
+    Syntax:	proxy_cache_methods GET | HEAD | POST ...;
+    Default:	
+    proxy_cache_methods GET HEAD;
+    Context:	http, server, location
+    This directive appeared in version 0.7.59.
+    ```
 * proxy_cache_min_uses，当请求的次数达到该阈值，对响应进行缓存。
-```
-Syntax: proxy_cache_min_uses number;
-Default: proxy_cache_min_uses 1;
-Context: http, server, location
-```
+    ```
+    Syntax: proxy_cache_min_uses number;
+    Default: proxy_cache_min_uses 1;
+    Context: http, server, location
+    ```
 * proxy_no_cache，定义请求不被缓存的条件, 当指定的 string 不为空或者不为0时，响应将不被缓存。
-```
-Syntax:	proxy_no_cache string ...;
-Default: —
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_no_cache string ...;
+    Default: —
+    Context: http, server, location
+    ```
 * proxy_cache_bypass，定义请求不读取缓存的条件。当指定的string不为空或者不为0时，响应不从缓存中获取，而是均直接请求后端。
-```
-Syntax:	proxy_cache_bypass string ...;
-Default: —
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_cache_bypass string ...;
+    Default: —
+    Context: http, server, location
+    ```
 * proxy_cache_convert_head，是否允许ngx将head方法转换为get方法进行请求，以次将head请求进行缓存。如果禁用，则需要通过 proxy_cache_methods 来开启对 HEAD 的缓存。
-```
-Syntax:	proxy_cache_key string;
-Default: proxy_cache_key $scheme$proxy_host$request_uri;
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_cache_key string;
+    Default: proxy_cache_key $scheme$proxy_host$request_uri;
+    Context: http, server, location
+    ```
 * proxy_cache_use_stale，当后端服务器处于指定的状态时，认为服务器不可用，使用历史缓存数据来响应客户端。
-```
-Syntax:	proxy_cache_use_stale error | timeout | invalid_header | updating | http_500 | http_502 | http_503 | http_504 | http_403 | http_404 | http_429 | off ...;
-Default: proxy_cache_use_stale off;
-Context: http, server, location
-```
+    ```
+    Syntax:	proxy_cache_use_stale error | timeout | invalid_header | updating | http_500 | http_502 | http_503 | http_504 | http_403 | http_404 | http_429 | off ...;
+    Default: proxy_cache_use_stale off;
+    Context: http, server, location
+    ```
 
 缓存 demo 示例:
 ```conf
