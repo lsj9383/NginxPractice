@@ -139,13 +139,110 @@ http {
     * nginx 将数据全部传给后台后，后台的处理耗时过长，nginx 的 socket 等待时间超过了该时间就会超时，断开连接。
     * 读等待时间超过了该时间，意味着两次成功读之间的时间一定超过该时间
 
-## 7.配置Demo
-### 1).*目录树*
-### 2).*各文件配置*
+## 3.6 缓存相关
+Nginx 常用的缓存方式为 Nginx Proxy，其原理相对简单：
+* 每次请求时都会计算请求的key，这个是一个 md5 值，根据不同的配置不同的请求计算的 key 方式可能不一样。
+* 如果 key 之前未进行缓存，或者缓存过期，则请求逻辑后台，将响应进行缓存，写到磁盘中。
+* 如果 key 之前已经被缓存，且未过期，则直接到磁盘 / 内存中获取响应。
 
-# 四、不常用配置
+缓存相关的命令如下：
+* proxy_cache_path，指定缓存的目录、key的共享内存名称大小、缓存时间等。
+```
+Syntax: proxy_cache_path path [levels=levels] [use_temp_path=on|off] keys_zone=name:size [inactive=time] [max_size=size] [manager_files=number] [manager_sleep=time] [manager_threshold=time] [loader_files=number] [loader_sleep=time] [loader_threshold=time]
+Default: —
+Context: http
+```
+    * path，指定缓存数据在磁盘中的落盘目录
+    * levels=levels，数据在磁盘中的存储路径位 /${path}/${key}, key 是一个 MD5 值，levels 将 key 部分切分位多个部分，每个部分是一个目录。levels最多有3级，即最多有3个目录。
+    * `use_temp_path=on|off`，所有的数据在落盘前都是存放在临时文件中的，如果`user_temp_path=on`则使用用户自定义的临时文件目录，由`proxy_temp_path`指定用户的临时文件目录。如果为off，则临时文件目录即缓存目录。
+    * `keys_zone=name:size`，指定缓存的共享内存空间，共享内存空间在多进程之间共享被缓存的key，ngx会先在共享内存中判断请求的key是否存在，如果存在则到磁盘中获取数据。size是共享内存空间。
+    * `inactive=time`，当 key 在 time 时间范围内都没有，该 key 所对应的文件将会从磁盘中移除。即便该 key 还未到过期时间。
+    * `cache manager`，nginx将会启动一个 cache manager 进程，该进程的目的是定期检查缓存文件是否需要清理。
+        * `max_size=size`，max_size参数设置的最大缓存大小。当超过此大小时，cache manager 进程将删除最近最少使用的数据。
+        * `manager_files=number`，每次处理不超过number个文件。
+        * `manager_threshold=time`，每次清理不能超过time耗时。
+        * `manager_sleep=time`，两次清理之间的间隔。（上一次清理完毕到下一次开始清理）。
+    * `cache loader`，nginx会定期启动要给cache loader，将磁盘中的缓存数据加载到内存中，避免频繁的磁盘读写操作。一次性加载所有内容会影响性能，因此ngx会控制每次加载到内存中的数据量。
+        * `loader_files=number`，每次加载的文件数量。
+        * `loader_threshold=time`，每次加载不超过time耗时。
+        * `loader_sleep=time`，两次加载的时间间隔。
 
-# 五、location匹配规则
+除去上述配置外，还有 purger 的配置，用于控制缓存文件的清理，这是商业项目支持的配置，这里暂不给出。
+* proxy_cache，定义请求在该上下文中使用的缓存区域，该区域名和 proxy_cache_path 中的 keys_zone 对应。通过这个方式将请求的缓存和 proxy_cache_path 指定的缓存区域关联起来。
+```
+Syntax:	proxy_cache zone | off;
+Default: proxy_cache off;
+Context: http, server, location
+```
+*  proxy_cache_valid，设置了对于不同响应状态码的数据缓存时间。该指令必须要配置，否则无法成功缓存。如果code没有填写，则只对 200 301 302 的响应进行缓存。如果code为any则对所有响应进行缓存。
+```
+Syntax:	proxy_cache_valid [code ...] time;
+Default:	—
+Context:	http, server, location
+```
+* proxy_cache_key，定义请求的 key，当请求的 key  被缓存时，直接返回请求对应的内容。
+```
+Syntax:	proxy_cache_key string;
+Default: proxy_cache_key $scheme$proxy_host$request_uri;
+Context: http, server, location
+```
+* proxy_cache_methods，指定的会进行缓存的请求需要满足的HTTP方法。
+```
+Syntax:	proxy_cache_methods GET | HEAD | POST ...;
+Default:	
+proxy_cache_methods GET HEAD;
+Context:	http, server, location
+This directive appeared in version 0.7.59.
+```
+* proxy_cache_min_uses，当请求的次数达到该阈值，对响应进行缓存。
+```
+Syntax: proxy_cache_min_uses number;
+Default: proxy_cache_min_uses 1;
+Context: http, server, location
+```
+* proxy_no_cache，定义请求不被缓存的条件, 当指定的 string 不为空或者不为0时，响应将不被缓存。
+```
+Syntax:	proxy_no_cache string ...;
+Default: —
+Context: http, server, location
+```
+* proxy_cache_bypass，定义请求不读取缓存的条件。当指定的string不为空或者不为0时，响应不从缓存中获取，而是均直接请求后端。
+```
+Syntax:	proxy_cache_bypass string ...;
+Default: —
+Context: http, server, location
+```
+* proxy_cache_convert_head，是否允许ngx将head方法转换为get方法进行请求，以次将head请求进行缓存。如果禁用，则需要通过 proxy_cache_methods 来开启对 HEAD 的缓存。
+```
+Syntax:	proxy_cache_key string;
+Default: proxy_cache_key $scheme$proxy_host$request_uri;
+Context: http, server, location
+```
+* proxy_cache_use_stale，当后端服务器处于指定的状态时，认为服务器不可用，使用历史缓存数据来响应客户端。
+```
+Syntax:	proxy_cache_use_stale error | timeout | invalid_header | updating | http_500 | http_502 | http_503 | http_504 | http_403 | http_404 | http_429 | off ...;
+Default: proxy_cache_use_stale off;
+Context: http, server, location
+```
+
+缓存 demo 示例:
+```conf
+http {
+    ....
+    proxy_cache_path /data/home/user00/openresty/nginx/test_proxy_cache levels=1:2 use_temp_path=off keys_zone=test_cache_zone:1m inactive=1m max_size=1G;
+    ....
+    
+    server {
+        location / {
+            proxy_cache   test_cache_zone;
+            proxy_cache_valid any 10m;
+            proxy_pass http://test_server_upstream;
+        }
+    }
+}
+```
+
+# 四、location匹配规则
 匹配uri的优先顺序，从高到底:
 * 0, `location = /uri`, 精确匹配优先级最高
 * 1, `location ^~ /uri`, 前缀匹配优先级次之, 前缀匹配内部按最大匹配长度来确认
@@ -154,10 +251,10 @@ http {
 * 3, `location /uri`, 优先级低于正则匹配的前缀匹配, 前缀匹配内部按最大匹配长度来确认
 * 4, `location /`, 优先级最低的, 通常进行默认处理
 
-# 六、http_map的使用
+# 五、http_map的使用
 
-# 七、Nginx执行阶段
-## 1.十一个处理阶段
+# 六、Nginx执行阶段
+## 6.1 十一个处理阶段
 * 1) `NGX_HTTP_POST_READ_PHASE`, 读取到完整的请求头后进行处理的阶段
 * 2) `NGX_HTTP_SERVER_REWRITE_PHASE`,  还未进行URI的Location匹配前的阶段，可以进行URI重写以进行Location匹配
 * 3) `NGX_HTTP_FIND_COFIG_PHASE`, 根据URI匹配Location的阶段(不可挂载)
@@ -170,18 +267,18 @@ http {
 * 10) `NGX_HTTP_CONTENT_PHASE`, 处理HTTP请求内容的阶段, 可以在返回client前控制具体内容, 例如gzip压缩内容就在该阶段
 * 11) `NGX_HTTP_LOG_PHASE`, 处理请求完成后的日志阶段, 比如ngx_http_log_module的handler在该阶段记录`access_log`
 
-## 3.常用场景
+## 6.2 常用场景
 ### 1).*响应信息收集*
 对于响应数据或许需要进行收集，例如自定义日志等。需要放在`NGX_HTTP_LOG_PHASE`进行处理，而不能放到`NGX_HTTP_CONTENT_PHASE`：
 * 因为在上一个阶段，已经处理了回包，该阶段不会影响请求的耗时
 * 在该阶段，我们可以获取到该次请求的所有信息(包括请求信息以及回包信息)
 
-# 八、日志记录
+# 七、日志记录
 
-# 九、常用模块
+# 八、常用模块
 
 # 九、一些常见的问题
-## 1.proxy_pass指令
+## 9.1.proxy_pass指令
 ### 1).proxy_pass的uri
 proxy_pass的uri写法一般有2种:
 ```conf
@@ -202,13 +299,14 @@ location /location-uri {
 
 ### 3).`uri`重定向`uri/`的问题
 
-## 2.set指令
+## 9.2 set指令
 ### 1).if语句块的生效顺序问题
 
-## 3.upstream语句块
-### 1).*节点在线检测*
+## 9.3 upstream语句块
+### 1).*主动探测节点存活*
+### 2).*被动检测节点存活*
 
-## 4.rewrite指令
+## 9.4 rewrite指令
 rewrite可以在server/location/if语句块中使用。
 * 指令格式:
     * `rewrite regex replacement [flag];`, 当请求的uri和`regex`匹配时，uri将会被改写为`replacement`。
