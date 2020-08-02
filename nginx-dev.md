@@ -32,7 +32,7 @@
         - [4.1 基本原理](#41-基本原理)
         - [4.2 配置项的解析方式](#42-配置项的解析方式)
         - [4.3 预设的配置项解析函数](#43-预设的配置项解析函数)
-        - [4.4 确定配置项](#44-确定配置项)
+        - [4.4 选择配置项](#44-选择配置项)
         - [4.5 预设的配置项合并函数](#45-预设的配置项合并函数)
         - [4.6 复杂配置项](#46-复杂配置项)
         - [4.7 一个配置项 Demo](#47-一个配置项-demo)
@@ -642,9 +642,9 @@ NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2
 offset(${struct}, ${field})
 ```
 
-### 4.4 确定配置项
+### 4.4 选择配置项
 
-确定用什么配置项交给 set 函数进行赋值配置。
+`ngx_command_t` 中的 conf 参数，用于选择具体的配置项交给 set 函数进行赋值配置。
 
 | conf                      | desc                                                             |
 | ------------------------- | ---------------------------------------------------------------- |
@@ -667,6 +667,15 @@ offset(${struct}, ${field})
 * `ngx_conf_merge_value(prev, conf, default)`，合并可以使用等号直接赋值的变量，这些变量要求初始化为 NGX_CONF_UNSET。
 * `ngx_conf_merge_str_value(prev, conf, default)`，合并 ngx_str_t 类型的变量，default 为 `char*` 字符串。
 * `ngx_conf_merge_ptr_value(prev, conf, default)`， 合并指针类型变量，这些变量要求初始化为 NGX_CONF_UNSET_PTR。
+
+更多的配置项合并可以参考 [src/core/ngx_conf_file.h](https://github.com/nginx/nginx/blob/master/src/core/ngx_conf_file.h)
+
+需要注意，对于复杂配置项没有合并函数，可以通过以下方法进行合并：
+```c
+if (child->mytest_complex == NULL) {
+    child->mytest_complex = parent->mytest_complex;
+}
+```
 
 ### 4.6 复杂配置项
 
