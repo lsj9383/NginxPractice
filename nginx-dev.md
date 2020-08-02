@@ -1035,3 +1035,4 @@ $ make && make install
 ## 附录
 * [[1] Nginx Module API](https://www.nginx.com/resources/wiki/extending/api/)
 * [[2] Nginx Development guide](https://nginx.org/en/docs/dev/development_guide.html)
+* [[3] Nginx src](https://github.com/nginx/nginx/tree/master/src)
