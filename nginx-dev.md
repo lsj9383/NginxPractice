@@ -29,10 +29,13 @@
         - [2.5 重要的配置项关系](#25-重要的配置项关系)
     - [三、常用的配置与上下文获取的宏](#三常用的配置与上下文获取的宏)
     - [四、配置解析](#四配置解析)
-        - [4.1 配置项的解析方式](#41-配置项的解析方式)
-        - [4.2 预设的配置项解析函数](#42-预设的配置项解析函数)
-        - [4.3 预设的配置项合并函数](#43-预设的配置项合并函数)
-        - [4.4 一个配置项 Demo](#44-一个配置项-demo)
+        - [4.1 基本原理](#41-基本原理)
+        - [4.2 配置项的解析方式](#42-配置项的解析方式)
+        - [4.3 预设的配置项解析函数](#43-预设的配置项解析函数)
+        - [4.4 确定配置项](#44-确定配置项)
+        - [4.5 预设的配置项合并函数](#45-预设的配置项合并函数)
+        - [4.6 复杂配置项](#46-复杂配置项)
+        - [4.7 一个配置项 Demo](#47-一个配置项-demo)
     - [五、添加内部变量](#五添加内部变量)
     - [六、模块处理函数挂载](#六模块处理函数挂载)
         - [6.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*](#61-ngx_http_content_phase阶段挂载方案)
@@ -41,6 +44,7 @@
     - [七、日志](#七日志)
         - [7.1 日志的格式化](#71-日志的格式化)
         - [7.2 日志的获取方式](#72-日志的获取方式)
+        - [7.3 对于复杂变量的打印](#73-对于复杂变量的打印)
     - [八、模块开发步骤](#八模块开发步骤)
         - [8.1 自定义配置结构体](#81-自定义配置结构体)
         - [8.2 配置项命令](#82-配置项命令)
@@ -470,6 +474,7 @@ struct ngx_command_s {
     void        *post;
 };
 ```
+
 下述为配置项各个成员的含义:
 
 | name | desc |
@@ -481,36 +486,7 @@ struct ngx_command_s {
 | offset | 配置项出现时，将其保存在自定义结构体中的内存偏移量, 主要是为了简化`set`。可用预定宏`offsetof(struct，member)`, 当然若`set`自定义，那么offset无意义 |
 | post | 通常为null |
 
-
-* `type`, 下面给出了常用宏，可以通过`|`进行组合功能:
-
-| type | desc |
-| ------ | ------ |
-| NGX_HTTP_MAIN_CONF | 该配置项可出现在http块内(不包含server块) |
-| NGX_HTTP_SRV_CONF | 该配置项可出现在server块内(不包含location块) |
-| NGX_HTTP_LOC_CONF | 该配置项可出现在location块内 |
-| NGX_CONF_NOARGS | 该配置项没有参数 |
-| NGX_CONF_TAKE1 | 可以携带1个参数 |
-| NGX_CONF_TAKE2 | 可以携带2个参数 |
-| NGX_CONF_TAKE12 | 可以携带1或者2个参数 |
-
-* `set`, 下面给出了常用的预设配置赋值函数的宏：
-
-| set | desc |
-| ------ | ------ |
-| ngx_conf_set_flag_slot | 配置项只能携带一个参数，且必须是 on/off |
-| ngx_conf_set_str_slot | 该配置项只能携带一个参数 |
-| ngx_conf_set_num_slot | 配置项只能携带一个参数，且必须为数字 |
-
-* `conf`, 下面给出常用宏：
-
-| conf | desc |
-| ------ | ------ |
-| NGX_HTTP_MAIN_CONF_OFFSET | 配置项只能携带一个参数，且必须是 on/off |
-| NGX_HTTP_SRV_OFFSET | 该配置项只能携带一个参数 |
-| NGX_HTTP_LOC_OFFSET | 使用 create_loc_conf 方法产生的结构体来存储解析出的配置项 |
-
-通常，我们使用的是 location 级别的配置项，因此这里通常使用 `NGX_HTTP_LOC_OFFSET`。
+更具体的可以参考 [四、配置解析](#四配置解析)
 
 #### 2.3.3 *ngx_http_module_t*
 ```c
@@ -613,48 +589,183 @@ ngx_http_send_header(r);
 
 
 ## 四、配置解析
-现在梳理下配置文件的解析流程:
-* 遇到http块时，创建的时http级的上下文, 将调用各模块的create_main_conf函数，同时还会调用create_srv_conf，create_loc_conf
-* 调用各模块的http模块上下文的preconfiguration回调函数
-* 解析http块内的配置项命令
-* 遇到server块时，创建的时server级的上下文, 将调用各模块的create_srv_conf函数，以及create_loc_conf函数
-* 解析server块内的配置项命令
-* 遇到location块时，创建的时local级的上下文, 将调用各模块的create_loc_conf函数，由于location内可嵌套location，此过程可递归
-* 解析location块内的配置项命令
-* 调用各模块的init_main_conf方法
-* 合并各模块main,srv,loc级别下的srv和loc配置项
-* 调用各模块的http模块上下文的postconfiguration回调函数
+### 4.1 基本原理
 
-下面的配置结构，将会生成如下表所示的内存布局结构，由于每个配置项只能存储在一种struct中，所以虽然是统一模块，但是main/srv/loc三种结构体中的配置项互不包含。
-```conf
-http {
-    server {
-        location { }
-        location { }
-    }
 
-    server {
-        location { }
-        location { }
-    }
+后续会列出配置项的各种预设宏定义，在开始前先再看下  `ngx_command_t` 的各项成员：
+```c
+typedef struct ngx_command_s ngx_command_t;
+struct ngx_command_s {
+    ngx_str_t   name;
+    ngx_uint_t  type;
+    char        *(*set)(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)；
+    ngx_uint_t  conf;
+    ngx_uint_t  offset;
+    void        *post;
+};
+```
+
+### 4.2 配置项的解析方式
+`ngx_command_t` 中的 type 参数，描述了解析配置项的方式，可以通过 `|` 进行多个功能特性的同时选择。
+
+常用的宏：
+| type | desc |
+| ------ | ------ |
+| NGX_HTTP_MAIN_CONF | 该配置项可出现在http块内(不包含server块) |
+| NGX_HTTP_SRV_CONF | 该配置项可出现在server块内(不包含location块) |
+| NGX_HTTP_LOC_CONF | 该配置项可出现在location块内 |
+| NGX_CONF_NOARGS | 该配置项没有参数 |
+| NGX_CONF_TAKE1 | 可以携带1个参数 |
+| NGX_CONF_TAKE2 | 可以携带2个参数 |
+| NGX_CONF_TAKE12 | 可以携带1或者2个参数 |
+
+例如配置项可以出现在 main、server、location，并且可以支持两个参数，则需要如下配置：
+```c
+NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE2
+```
+
+### 4.3 预设的配置项解析函数
+
+`ngx_command_t` 中的 set 参数，用于配置预设的配置项赋值方式，这非常方便，避免自己写解析配置项值的函数。
+
+常用的宏：
+| set | desc |
+| ------ | ------ |
+| ngx_conf_set_flag_slot | 配置项只能携带一个参数，且必须是 on/off |
+| ngx_conf_set_str_slot | 该配置项只能携带一个参数 |
+| ngx_conf_set_num_slot | 配置项只能携带一个参数，且必须为数字 |
+| ngx_http_set_complex_value_slot | 配置项只能携带一个参数，可以为变量 |
+
+和 set 参数息息相关的是 offset 参数，因为要告知 Nginx 解析出来的配置项值需要赋值给配置对象中的哪个变量，使用 offset 函数非常方便：
+```c
+// 指定 struct 的 field 字段
+offset(${struct}, ${field})
+```
+
+### 4.4 确定配置项
+
+确定用什么配置项交给 set 函数进行赋值配置。
+
+| conf                      | desc                                                             |
+| ------------------------- | ---------------------------------------------------------------- |
+| NGX_HTTP_MAIN_CONF_OFFSET | http 使用的配置项，即 `ngx_http_conf_ctx->main_conf[ctx_index]`     |
+| NGX_HTTP_SRV_CONF_OFFSET  | server 使用的配置项，即 `ngx_http_conf_ctx->srv_conf[ctx_index]`    |
+| NGX_HTTP_LOC_CONF_OFFSET  | location 使用的配置项，即 `ngx_http_conf_ctx->loc_conf[ctx_index]`  |
+
+通常，我们使用的是 location 配置项，因此这里通常使用 `NGX_HTTP_LOC_OFFSET`。
+
+注意，这里提到的 `location 使用的配置项`，并不是指只出现在 location 中的配置项，而是`匹配到一个请求进行处理`，这类均是属于 location 范畴。
+
+配置项没有出现在 location 块中，但是出现在 http / server 块中，仍然属于 location 会使用到的配置项。
+
+到解析 http server 块的时候，也会生成 `ngx_http_conf_ctx` 对象，也会调用 `create_loc_conf` 创建在 location 中会使用的配置。
+
+### 4.5 预设的配置项合并函数
+
+在合并函数中，可以通过一些预设的命令来对常见类型的配置项进行合并。
+
+* `ngx_conf_merge_value(prev, conf, default)`，合并可以使用等号直接赋值的变量，这些变量要求初始化为 NGX_CONF_UNSET。
+* `ngx_conf_merge_str_value(prev, conf, default)`，合并 ngx_str_t 类型的变量，default 为 `char*` 字符串。
+* `ngx_conf_merge_ptr_value(prev, conf, default)`， 合并指针类型变量，这些变量要求初始化为 NGX_CONF_UNSET_PTR。
+
+### 4.6 复杂配置项
+
+复杂配置项是用于快速支持配置项中存在变量的情况，如果使用复杂配置项，可以正确解析参数中的 `$var` 变量的值。如果使用 ngx_str_t 作为解析方式，则无法取到参数对应的值，而是取到字符串 `"$var"`。
+
+复杂配置项的类型为：`ngx_http_complex_value_t`，通常是一个指针。
+
+复杂配置项的解析函数：`ngx_http_set_complex_value_slot`。
+
+复杂配置项的使用需要使用固定的函数转换为 ngx_str_t 进行使用: `ngx_http_complex_value`
+
+配置项对应值的提取：
+```c
+ngx_str_t val;
+
+if (slcf->my_complex == NULL) {
+    return NGX_DECLINED;
+}
+
+if (ngx_http_complex_value(r, slcf->my_complex, &val) != NGX_OK) {
+    return NGX_ERROR;
 }
 ```
 
-`srv_struct1`和`srv_struct2`将会合并，得到`srv-a`块的真正的struct。`srv-b`和location的合并类似。可以看到高级别语句块生成低级别config主要是方便进行合并，也就是说:
-* http语句块解析时, 生成的srv_config会用于和server语句块的生成的srv_config合并
-* http语句块解析时, 生成的loc_config会用于和server语句块的生成的loc_config合并
-* http语句块解析时, 生成的loc_config会用于和location语句块的生成的config合并
-* server语句块解析时, 生成的loc_config会用于和location语句块的生成的config合并
+### 4.7 一个配置项 Demo
 
-如果程序执行过程中loc_config, srv_config, main_config遭到了修改，这个修改将会生效。每次reload时都会重新解析，加载配置文件。
+```c
+typedef struct{
+    ngx_str_t                   mytest_str;
+    ngx_uint_t                  mytest_uint;
+    ngx_http_complex_value_t    *mytest_complex;        // 需要注意，复杂变量这里配置的是指针
+}ngx_http_mytest_conf_t;
 
-### 4.1 配置项的解析方式
 
-### 4.2 预设的配置项解析函数
+static ngx_command_t ngx_http_mytest_commands[] = {
+    {
+        ngx_string("mytest_str"),
+        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_mytest_conf_t, mytest_str),
+        NULL
+    },
+    {
+        ngx_string("mytest_uint"),
+        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_num_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_mytest_conf_t, mytest_uint),
+        NULL
+    },
+    {
+        ngx_string("mytest_complex"),
+        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_http_set_complex_value_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_mytest_conf_t, mytest_complex),
+        NULL
+    },
 
-### 4.3 预设的配置项合并函数
+    ngx_null_command
+};
 
-### 4.4 一个配置项 Demo
+// 创建配置项
+void* ngx_http_mytest_create_loc_conf(ngx_conf_t *cf){
+    ngx_http_mytest_conf_t *conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_mytest_conf_t));
+
+    if(!conf) {
+        return NULL;
+    }
+
+    return conf;
+}
+
+// 合并配置项
+char* ngx_http_mytest_merge_loc_conf(ngx_conf_t *cf, void *prev, void *conf) {
+    ngx_http_mytest_conf_t *parent = prev;
+    ngx_http_mytest_conf_t *child  = conf;
+
+    // 对于复杂值，通过判断 child complex 是否为 NULL 来判断是否使用 parent complex 来进行合并
+    if (child->mytest_complex == NULL) {
+        child->mytest_complex = parent->mytest_complex;
+    }
+
+    return NGX_CONF_OK;
+}
+
+// 模块上下文
+static ngx_http_module_t ngx_http_mytest_module_ctx = {
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    ngx_http_mytest_create_loc_conf,
+    ngx_http_mytest_merge_loc_conf
+};
+```
 
 ## 五、添加内部变量
 Nginx 存在两种变量：
@@ -764,6 +875,8 @@ ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "test_flag=%d, test_str=%V, 
 | %s     | u_char * (null-terminated)   | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%s", "lsj")`                |
 | %*s    | size_t + u_char *            | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%*s", name.len, name,data)` |
 
+需要注意，上述 `%p`, `%V` 都是用的对象的指针。
+
 ### 7.2 日志的获取方式
 * 对于处理请求，可以从请求的连接中拿到日志:
 ```c
@@ -772,6 +885,22 @@ ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "the log in request->connect
 * 若处于非请求中（例如解析配置文件），则可以从 ngx_conf_t 中拿到日志:
 ```c
 ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "the log in ngx_conf");
+```
+
+### 7.3 对于复杂变量的打印
+上面提到的复杂变量，复杂变量通常需要将其提取为 ngx_str_t 类型的数据才能进行数据打印：
+```c
+ngx_str_t val;
+
+if (slcf->my_complex == NULL) {
+    return NGX_DECLINED;
+}
+
+if (ngx_http_complex_value(r, slcf->my_complex, &val) != NGX_OK) {
+    return NGX_ERROR;
+}
+
+ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "my complex: %V", &val);
 ```
 
 ## 八、模块开发步骤
