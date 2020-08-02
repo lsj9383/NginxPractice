@@ -22,21 +22,33 @@
             - [2.3.1 *ngx_module_t*](#231-ngx_module_t)
             - [2.3.2 *ngx_command_t*](#232-ngx_command_t)
             - [2.3.3 *ngx_http_module_t*](#233-ngx_http_module_t)
+            - [2.3.4 *ngx_http_conf_ctx_t*](#234-ngx_http_conf_ctx_t)
         - [2.4 请求于与响应的结构](#24-请求于与响应的结构)
             - [2.4.1 请求](#241-请求)
             - [2.4.2 响应](#242-响应)
-    - [三、配置解析](#三配置解析)
-    - [四、模块处理函数挂载](#四模块处理函数挂载)
-        - [4.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*](#41-ngx_http_content_phase阶段挂载方案)
-        - [4.2 *通用挂载方案*](#42-通用挂载方案)
+        - [2.5 重要的配置项关系](#25-重要的配置项关系)
+    - [三、常用的配置与上下文获取的宏](#三常用的配置与上下文获取的宏)
+    - [四、配置解析](#四配置解析)
+        - [4.1 配置项的解析方式](#41-配置项的解析方式)
+        - [4.2 预设的配置项解析函数](#42-预设的配置项解析函数)
+        - [4.3 预设的配置项合并函数](#43-预设的配置项合并函数)
+        - [4.4 一个配置项 Demo](#44-一个配置项-demo)
+    - [五、添加内部变量](#五添加内部变量)
+    - [六、模块处理函数挂载](#六模块处理函数挂载)
+        - [6.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*](#61-ngx_http_content_phase阶段挂载方案)
+        - [6.2 *通用挂载方案*](#62-通用挂载方案)
         - [4.3 *处理器返回值*](#43-处理器返回值)
-    - [五、模块开发步骤](#五模块开发步骤)
-        - [5.1 自定义配置结构体](#51-自定义配置结构体)
-        - [5.2 配置项命令](#52-配置项命令)
-        - [5.3 模块上下文](#53-模块上下文)
-    - [六、模块构建](#六模块构建)
-        - [6.1 模块准备](#61-模块准备)
-        - [6.2 模块编译](#62-模块编译)
+    - [七、日志](#七日志)
+        - [7.1 日志的格式化](#71-日志的格式化)
+        - [7.2 日志的获取方式](#72-日志的获取方式)
+    - [八、模块开发步骤](#八模块开发步骤)
+        - [8.1 自定义配置结构体](#81-自定义配置结构体)
+        - [8.2 配置项命令](#82-配置项命令)
+        - [8.3 模块上下文](#83-模块上下文)
+    - [九、模块构建](#九模块构建)
+        - [9.1 模块准备](#91-模块准备)
+        - [9.2 模块编译](#92-模块编译)
+    - [附录](#附录)
 
 <!-- /TOC -->
 
@@ -388,8 +400,8 @@ struct ngx_conf_s {
 // 我们通常这样定义一个ngx_module_t
 ngx_module_t  ngx_http_<module name>_module = {
     NGX_MODULE_V1,
-    &ngx_http_<module name>_module_ctx,     /* module context */
-    ngx_http_<module name>_commands,        /* module directives */
+    &ngx_http_${module}_module_ctx,         /* module context */
+    ngx_http_${module}_commands,            /* module directives */
     NGX_HTTP_MODULE,                        /* module type */
     NULL,                                   /* init master */
     NULL,                                   /* init module */
@@ -441,6 +453,10 @@ struct ngx_module_s {
 };
 ```
 
+通常而言，只需要定义 ctx 和 commands：
+* ctx，对于 http 模块，该类型为 `ngx_http_module_t`，即如何解析模块的配置项，以及添加 handlers 挂载函数。
+* commands, 该变量告诉 Nginx HTTP 框架，该模块所拥有的配置项，HTTP 框架回去解析这些配置项。
+
 #### 2.3.2 *ngx_command_t*
 用来定义一个模块的配置项，以及这个配置项的解析和存储方式
 ```c
@@ -460,13 +476,13 @@ struct ngx_command_s {
 | ------ | ------ |
 | name | 配置项在配置文件中使用的名称 |
 | type | 配置项类型，该值会指定该配置项可出现的位置, 以及可以指定携带多少个参数 |
-| set | 在解析配置时，碰到了该配置项名后, 将会调用该方法来解析其后面的参数, 并保存在自定义结构体中, nginx预设了一些解析函数 |
-| conf | 该参数决定该配置项用creat_`http/srv/loc`_conf中的哪个上下文进行存储, 很明显，一个配置只可能属于一种结构体。  |
+| set | 在解析配置时，碰到了该配置项名后, 将会调用该方法来解析其后面的参数, 并保存在自定义结构体中, nginx 预设了一些解析函数 |
+| conf | 该参数决定该配置项用 creat_`http/srv/loc`_conf 中的哪个上下文进行存储, 很明显，一个配置只可能属于一种结构体。  |
 | offset | 配置项出现时，将其保存在自定义结构体中的内存偏移量, 主要是为了简化`set`。可用预定宏`offsetof(struct，member)`, 当然若`set`自定义，那么offset无意义 |
 | post | 通常为null |
 
 
-给出了`type`的常用宏，可以通过`|`进行组合功能:
+* `type`, 下面给出了常用宏，可以通过`|`进行组合功能:
 
 | type | desc |
 | ------ | ------ |
@@ -478,40 +494,76 @@ struct ngx_command_s {
 | NGX_CONF_TAKE2 | 可以携带2个参数 |
 | NGX_CONF_TAKE12 | 可以携带1或者2个参数 |
 
+* `set`, 下面给出了常用的预设配置赋值函数的宏：
+
+| set | desc |
+| ------ | ------ |
+| ngx_conf_set_flag_slot | 配置项只能携带一个参数，且必须是 on/off |
+| ngx_conf_set_str_slot | 该配置项只能携带一个参数 |
+| ngx_conf_set_num_slot | 配置项只能携带一个参数，且必须为数字 |
+
+* `conf`, 下面给出常用宏：
+
+| conf | desc |
+| ------ | ------ |
+| NGX_HTTP_MAIN_CONF_OFFSET | 配置项只能携带一个参数，且必须是 on/off |
+| NGX_HTTP_SRV_OFFSET | 该配置项只能携带一个参数 |
+| NGX_HTTP_LOC_OFFSET | 使用 create_loc_conf 方法产生的结构体来存储解析出的配置项 |
+
+通常，我们使用的是 location 级别的配置项，因此这里通常使用 `NGX_HTTP_LOC_OFFSET`。
+
 #### 2.3.3 *ngx_http_module_t*
 ```c
 typedef struct {
-    /*配置解析前*/
+    // 配置解析前
     ngx_int_t   (*preconfiguration)(ngx_conf_t *cf);
 
-    /*配置解析完毕后*/
+    // 配置解析完毕后
     ngx_int_t   (*postconfiguration)(ngx_conf_t *cf);
 
-    /*当碰到http块时的回调函数，用于创建http块配置项*/
+    // 当碰到http块时的回调函数，用于创建http块配置项
     void*       (*create_main_conf)(ngx_conf_t *cf);
 
-    /*初始化http块配置项，该函数会在配置项合并前调用*/
+    // 初始化http块配置项，该函数会在配置项合并前调用
     char*       (*init_main_conf)(ngx_conf_t *cf, void *conf);
 
-    /*当碰到http/server块时的回调函数，用于创建server块配置项*/
+    // 当碰到 http/server 块时的回调函数，用于创建 server 块配置项
     void*       (*create_srv_conf)(ngx_conf_t *cf);
 
-    /*用于合并Main级别和Srv级别的server块配置项*/
+    // 用于合并 main 级别和 srv 级别的 server 块配置项
     char*       (*merge_srv_conf)(ngx_conf_t *cf, void *prev, void *conf);
 
-    /*当碰到http/server/location块时的回调函数，用于创建location块的配置项*/
+    // 当碰到 http/server/location 块时的回调函数，用于创建 location 块的配置项
     void*       (*create_loc_conf)(ngx_conf_t *cf);
 
-    /*用于合并Main,Srv级别和Loc级别的location块配置项*/
+    // 用于合并main, srv 级别和 loc 级别的location块配置项
     char*       (*merge_loc_conf)(ngx_conf_t *cf, void *prev, void *conf);
 } ngx_http_module_t;
 ```
 * postconfiguration, 配置解析完毕后调用, 通常在这个函数中注册某个Phase的handler。
-* create_main_conf, 生成http级别的上下文
-* create_srv_conf, 生成server级别的上下文
-* create_loc_conf, 生成local级别的上下文
+* create_main_conf
+* create_srv_conf
+* create_loc_conf
+
+#### 2.3.4 *ngx_http_conf_ctx_t*
+每次碰到 http / server / location 语句块，都会生成一个 ngx_http_conf_ctx_t 对象，用于存储对应级别的 http / server / location 配置。
+
+```c
+typedef struct {
+    void **main_conf;
+    void **srv_conf;
+    void **loc_conf;
+} ngx_http_conf_ctx_t;
+```
+
+一个 ngx_http_conf_ctx_t 会存储所有模块的 http / server / location 配置。
+
+* `ngx_http_conf_ctx_t.main_conf[ctx_index]`, 某个模块的 http 配置。
+* `ngx_http_conf_ctx_t.srv_conf[ctx_index]`, 某个模块的 server 配置。
+* `ngx_http_conf_ctx_t.loc_conf[ctx_index]`, 某个模块的 location 配置。
 
 ### 2.4 请求于与响应的结构
+
 #### 2.4.1 请求
 ```c
 typedef struct {
@@ -521,7 +573,6 @@ typedef struct {
     ngx_str_t                           args;               /* 是请求串参数中问号后面的参数(e.g. "name=john") */
     ngx_http_headers_in_t               headers_in;         /* 请求头 */
     ngx_http_headers_out_t              headers_out;        /* 响应头 */
-
 ...
 } ngx_http_request_t;
 ```
@@ -545,7 +596,23 @@ typedef stuct {
 ngx_http_send_header(r);
 ```
 
-## 三、配置解析
+### 2.5 重要的配置项关系
+
+## 三、常用的配置与上下文获取的宏
+* ngx_http_cycle_get_module_main_conf, 通过 cycle 获得指定模块的 main_conf。
+```c
+# define ngx_http_cycle_get_module_main_conf(cycle, module)                                         \
+(                                                                                                   \
+    cycle->conf_ctx[ngx_http_module.index] ?                                                        \
+    ((ngx_http_conf_ctx *) cycle->conf_ctx[ngx_http_module.index])->main_conf[module.ctx_index] :   \
+    NULL                                                                                            \
+)
+```
+* ngx_http_conf_get_module_main_conf, 通过 `nginx_conf_t` 获得指定模块的 main_conf。
+* ngx_http_get_module_loc_conf, 通过 `ngx_http_request_t` 获得指定模块的 loc_conf，常用来获得模块自己定义的 loc_conf。
+
+
+## 四、配置解析
 现在梳理下配置文件的解析流程:
 * 遇到http块时，创建的时http级的上下文, 将调用各模块的create_main_conf函数，同时还会调用create_srv_conf，create_loc_conf
 * 调用各模块的http模块上下文的preconfiguration回调函数
@@ -573,16 +640,6 @@ http {
 }
 ```
 
-| level | main_config | srv_config | loc_config |
-| :------: | :------: | :------: | :------: |
-| http | main_struct| srv_struct1 | loc_struct1 |
-| srv-a | nil | srv_struct2 | loc_struct2 |
-| loc | nil | nil | loc_struct3 |
-| loc | nil | nil | loc_struct4 |
-| srv-b | nil | srv_struct3 | loc_struct5 |
-| loc | nil | nil | loc_struct6 |
-| loc | nil | nil | loc_struct7 |
-
 `srv_struct1`和`srv_struct2`将会合并，得到`srv-a`块的真正的struct。`srv-b`和location的合并类似。可以看到高级别语句块生成低级别config主要是方便进行合并，也就是说:
 * http语句块解析时, 生成的srv_config会用于和server语句块的生成的srv_config合并
 * http语句块解析时, 生成的loc_config会用于和server语句块的生成的loc_config合并
@@ -591,9 +648,22 @@ http {
 
 如果程序执行过程中loc_config, srv_config, main_config遭到了修改，这个修改将会生效。每次reload时都会重新解析，加载配置文件。
 
-## 四、模块处理函数挂载
+### 4.1 配置项的解析方式
+
+### 4.2 预设的配置项解析函数
+
+### 4.3 预设的配置项合并函数
+
+### 4.4 一个配置项 Demo
+
+## 五、添加内部变量
+Nginx 存在两种变量：
+* 内部变量，由 Nginx C 模块配置的变量。
+* 外部变量，即通过 set 命令设置的变量。
+
+## 六、模块处理函数挂载
 模块定义好后，上下文的内容也创建好了，解析方式也有了，接着就是http请求来了以后，请求到了某个阶段，将会触发模块对请求进行处理。在指定阶段对请求进行处理，需要将模块的处理函数挂载到对应的阶段上。
-### 4.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*
+### 6.1 *`NGX_HTTP_CONTENT_PHASE`阶段挂载方案*
 该方案在配置命令的set回调函数中, 进行挂载, 只适合于`NGX_HTTP_CONTENT_PHASE`。
 ```c
 static char* ngx_http_example_set_func(ngx_conf_t *cf,ngx_command_t *cmd,void *conf){
@@ -603,15 +673,15 @@ static char* ngx_http_example_set_func(ngx_conf_t *cf,ngx_command_t *cmd,void *c
 }
 ```
 
-### 4.2 *通用挂载方案*
+### 6.2 *通用挂载方案*
 所有的可挂载点，都可以在上下文配置解析完毕后进行挂载，即通过`ngx_int_t   (*postconfiguration)(ngx_conf_t *cf)`回调:
 ```c
 //该函数用于挂载到日志阶段，执行mylog模块的逻辑
 static ngx_int_t ngx_http_mytest_handler(ngx_http_request_t *r);
 
-static ngx_int_t postconfiguration(ngx_conf_t *cf){
+static ngx_int_t postconfiguration(ngx_conf_t *cf) {
     ngx_http_handler_pt *h;
-    ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf(cf,ngx_http_core_module);
+    ngx_http_core_main_conf_t *cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
     /*
      * ngx_http_core_main_conf_t的phases成员保存了各个阶段的回调函数
      */
@@ -634,8 +704,79 @@ static ngx_int_t postconfiguration(ngx_conf_t *cf){
 * NGX_AGAIN, NGX_DONE, 在该阶段挂起, 当事件触发时(如io或者延时)ngx重新执行handler
 * 其他值则直接认为是响应的状态码, 将会直接终止Handler, 并返回该状态码。
 
-## 五、模块开发步骤
-### 5.1 自定义配置结构体
+## 七、日志
+Nginx C 模块打印日志的方法非常多，主要是因为有的平台不支持可变参数导致，Linux 下通常都可以使用可变参数，因此这里主要列出可变参数的日志打印方法：
+* ngx_log_error(level, log, args...)
+* ngx_log_debug(level, log, args...)
+* ngx_log_error_core(level, log, err, fmt, ...)
+
+```c
+#define ngx_log_error(level, log, args...) \
+    if ((log)->log_level >= level) ngx_log_error_core(level, log, args)
+
+#define ngx_log_debug(level, log, args...) \
+    if ((log)->log_level & level) ngx_log_error_core(NGX_LOG_DEBUG, log, args)
+```
+
+ngx_log_error 根据日志的级别不同进行日志打印，其中的 level 参数支持以下的日志级别：
+* NGX_LOG_STDERR, 0, 最高级别日志，日志内容不会在写入 log 参数指定的文件，而是会直接将日志输出到标准错误设备。
+* NGX_LOG_EMERG, 1
+* NGX_LOG_ALERT, 2
+* NGX_LOG_CRIT, 3
+* NGX_LOG_ERR, 4
+* NGX_LOG_WARN, 5
+* NGX_LOG_NOTICE, 6
+* NGX_LOG_INFO, 7
+* NGX_LOG_DEBUG, 8
+
+ngx_log_debug 打印的是 DEBUG 日志，其中的 level 参数用于区分日志用途：
+* NGX_LOG_DEBUG_CORE
+* NGX_LOG_DEBUG_ALLOC
+* NGX_LOG_DEBUG_MUTEX
+* NGX_LOG_DEBUG_EVENT
+* NGX_LOG_DEBUG_HTTP
+* NGX_LOG_DEBUG_MAIL
+* NGX_LOG_DEBUG_MYSQL
+
+无论是 ngx_log_error 或是 ngx_log_debug， 都是依赖于 ngx_log_error_core 函数实现的日志打印，其中的参数有：
+* level，已在上述给出。
+* log，日志对象。
+* err， 表示错误码，不为 0 时， Nginx 会输出对应错误码的字符串信息。
+* fmt，可变参数，包括字符串和格式化参数的值。
+
+demo:
+```c
+ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "test_flag=%d, test_str=%V, path=%*s",
+              mycf->my_flag,        // ngx_flag_t
+              &mycf->my_str,        // ngx_str_t
+              mycf->my_path->name.len, mycf->my_path->name.data);   // ngx_path_t
+```
+
+
+### 7.1 日志的格式化
+这里仅列出部分常用格式，更具体的参考 [src/core/ngx_string.c](https://github.com/nginx/nginx/blob/master/src/core/ngx_string.c)
+| format | desc                         | demo                                                                        |
+| ------ | ---------------------------- | --------------------------------------------------------------------------- |
+| %T     | time_t                       | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "time=%T", now)`                  |
+| %i     | ngx_int_t                    | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%i", 18)`                   |
+| %p     | void *                       | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%p", &name)`                |
+| %V     | ngx_str_t *                  | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%V", &name)`                |
+| %s     | u_char * (null-terminated)   | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%s", "lsj")`                |
+| %*s    | size_t + u_char *            | `ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "name=%*s", name.len, name,data)` |
+
+### 7.2 日志的获取方式
+* 对于处理请求，可以从请求的连接中拿到日志:
+```c
+ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0, "the log in request->connection");
+```
+* 若处于非请求中（例如解析配置文件），则可以从 ngx_conf_t 中拿到日志:
+```c
+ngx_log_error(NGX_LOG_ALERT, cf->log, 0, "the log in ngx_conf");
+```
+
+## 八、模块开发步骤
+
+### 8.1 自定义配置结构体
 配置结构体用于模块保存自己的配置信息, 需要在ngx解析配置文件时对配置结构体对象进行初始化、赋值。
 
 配置结构体有三种: main, server, location，通常的命名方式为:`ngx_(core|http)_${module}_(main|srv|loc)_conf_t`
@@ -648,7 +789,7 @@ typedef struct{
 }ngx_http_mylog_conf_t;
 ```
 
-### 5.2 配置项命令
+### 8.2 配置项命令
 需要确定有一些什么配置项，以及保存配置项的结构体，nginx启动的时候进行解析，并将相关的数据保存到结构体中。
 ```c
 /*
@@ -686,7 +827,7 @@ static ngx_command_t ngx_http_mylog_commands[] = {
 ```
 在模块上下文中，将会描述如何解析这些配置。
 
-### 5.3 模块上下文
+### 8.3 模块上下文
 模块上下文可以理解为模块的配置项在内存中实际存储的信息。
 ```c
 /* 函数声明 */
@@ -727,8 +868,8 @@ ngx_module_t ngx_http_mytest_module = {
 };
 ```
 
-## 六、模块构建
-### 6.1 模块准备
+## 九、模块构建
+### 9.1 模块准备
 一个第三方模块通常是一个目录，包含一个config文件和源码文件:
 * config, 用于告诉Nginx当前模块的信息, 以及如何编译当前模块
 * 源码文件即第三方模块源代码, 在第三方模块中会定义模块、命令、handler等。
@@ -744,7 +885,7 @@ NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/$src_file"
 ```
 `${module_name}`和`${src_file}`需要第三方模块进行填写
 
-### 6.2 模块编译
+### 9.2 模块编译
 当模块目录准备好后, 需要将模块二进制文件编译到ngx中, 这需要重新编译
 ```sh
 $ ./configure ... \
@@ -752,3 +893,7 @@ $ ./configure ... \
 
 $ make && make install
 ```
+
+## 附录
+* [[1] Nginx Module API](https://www.nginx.com/resources/wiki/extending/api/)
+* [[2] Nginx Development guide](https://nginx.org/en/docs/dev/development_guide.html)
