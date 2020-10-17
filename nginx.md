@@ -334,7 +334,7 @@ location / {
 
 - auth_basic，开启认证的开关。
   - 若配置为 `off` 则关闭认证，这也是默认配置。
-  - 若配置为字符串，则值为 realm，会在认证错误时，返回于响应头 `WWW-Authenticate: Basic realm="${realm}"`。realm 是一个保护区域的描述。参考[WWW-Authenticate](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers/WWW-Authenticate)）。
+  - 若配置为字符串，则值为 realm，会 `401 Unauthorized`时，返回于响应头 `WWW-Authenticate: Basic realm="${realm}"`。realm 是一个保护区域的描述。参考[WWW-Authenticate](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers/WWW-Authenticate)）。
 
   ```txt
   Syntax: auth_basic string | off;
@@ -371,6 +371,20 @@ $ htpasswd -c ${file} ${name}
 New password:
 Re-type new password:
 ```
+
+使用 openssl passwd 生成密码：
+
+```sh
+# 先输入命令，后输入密码
+$ openssl passwd
+Password:
+Verifying - Password:
+UNxMnEPVB9zXo
+
+# 也可以通过 openssl passwd ${pwd} 直接指定密码
+```
+
+密码通常都是通过随即盐做 hash 值，所以每次运行得到的密码通常是不一样的
 
 ## location匹配规则
 
