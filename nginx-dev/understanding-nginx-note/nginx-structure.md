@@ -2,6 +2,23 @@
 
 对应书中的 `第 8 章 Nginx 基础架构`，仅列出本章中个人感觉重要且有意义的点。
 
+<!-- TOC -->
+
+- [Nginx 基础架构](#nginx-基础架构)
+    - [Nginx 架构设计](#nginx-架构设计)
+        - [模块化设计](#模块化设计)
+        - [请求的多阶段异步处理](#请求的多阶段异步处理)
+    - [Nginx 的核心结构体](#nginx-的核心结构体)
+        - [ngx_listen_t](#ngx_listen_t)
+        - [ngx_cycle_t](#ngx_cycle_t)
+    - [Nginx 启动处理流程](#nginx-启动处理流程)
+    - [Nginx Worker 工作流程](#nginx-worker-工作流程)
+    - [Nginx Master 工作流程](#nginx-master-工作流程)
+    - [ngx_pool_t](#ngx_pool_t)
+    - [疑问](#疑问)
+
+<!-- /TOC -->
+
 ## Nginx 架构设计
 
 ### 模块化设计
@@ -39,7 +56,12 @@ struct ngx_listening_s {
     ngx_log_t               *logp;
     ngx_msec_t              post_acceept_time_out;
     ngx_listening_t         *previous;
+
+    // =========== 监听句柄对应 connection ==============
+    // 在 epoll event module 初始化的时候，会将 connection->read->handler 配置为 ngx_event_accept
+    // 这样在收到 TCP 三次握手请求的时候，就可以触发对应的事件回调，并获取对应的连接，并且会进一步回调 ngx_listening_t.handler
     ngx_connection_t        *connection;
+    // ================================================
 
     unsigned                open:1;
     unsigned                remain:1;
@@ -140,8 +162,8 @@ ngx_cycle_t 相关的方法：
 1. Nginx 启动时，首先解析命令行参数。Nginx 会预先创建一个临时的 `ngx_cycle_t` 变量，用以存储配置文件路径和一个输出到屏幕的 log。对于配置文件路径的生成依赖于 `ngx_process_options(ngx_cycle_t)` 函数。
 1. 随后判断是否处于平滑升级，若是，则通过 `ngx_add_inherited_sockets(ngx_cycle_t)` 从环境变量中继承原 master 进程的相关信息，以使用原 master 进程的监听端口，以实现平滑升级。
 1. 此时调用 ngx_init_cycle 方法，会去读取、解析 `nginx.conf` 配置文件。
-1. 调用所有`核心模块`的 `create_conf` 方法。而对于非核心模块的配置解析，则是交给了核心模块来完成，因为任何一个非核心模块，都是从属于某一个核心模块的。非核心模块的配置解析是由核心模块去约定的。
-1. 遍历 `nginx.conf` 的所有配置项，对于任何配置项，会检查所有`核心模块`，以找出对它感兴趣的模块。
+1. 调用所有`核心模块`的 `create_conf` 方法。而对于非核心模块的配置解析，则是交给了核心模块来完成，因为任何一个非核心模块，都是从属于某一个核心模块的。非核心模块的配置解析是由核心模块去约定的。需要注意，一般并不是核心模块的 `create_conf` 触发了去创建子模块的配置，子模块的配置创建往往是在解析对应的语句块指令时，其回调触发的。例如事件模块的子模块都是在 `event {}` 这个配置项的解析回调中对子模块的配置进行创建和解析。
+1. 遍历 `nginx.conf` 的所有配置项，对于任何配置项，会检查所有`核心模块`的配置项，以找出对它感兴趣的模块。
 1. 调用所有核心的的 `init_conf` 方法，通知解析完毕。
 1. 创建目录、打开文件、初始化共享内存。
 1. 此时所有模块都已经拿到了自己的监听端口，并添加到 `ngx_cycle_t` 的 listening 数组中了，Nginx 框架这一步将会把这些监听端口全部打开。即调用 `ngx_open_listening_sockts(ngx_cycle_t)`。
