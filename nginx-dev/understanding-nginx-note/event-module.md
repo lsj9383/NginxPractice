@@ -805,3 +805,9 @@ ngx_process_events_and_timers() {
 在 Nginx 中 ngx_process_events_and_timers 由核心模块 ngx_event_module 实现，直接由 Nginx 框架调用。
 
 worker 将会循环调用 `ngx_process_events_and_timers` 函数以进行事件处理，该函数会进行 accept_mutex、负载均衡、事件获取、事件处理、定时器事件等等工作。
+
+核心操作主要有：
+
+- 调用所使用的事件驱动模块实现的 process_events 方法，处理网络事件。
+- 处理两个 post 队列中的事件。也就是分别调用 `ngx_event_process_posted(cycle, &ngx_posted_accept_events)` 和 `ngx_event_process_posted(cycle, &ngx_posted_events)`。
+- 处理定时器事件，实际上就是调用 `ngx_event_expire_timers()`。
