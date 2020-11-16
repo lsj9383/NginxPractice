@@ -6,8 +6,8 @@
     - [概述](#概述)
     - [Nginx 的事件](#nginx-的事件)
     - [Nginx 的连接](#nginx-的连接)
-        - [主动连接](#主动连接)
         - [被动连接](#被动连接)
+        - [主动连接](#主动连接)
         - [ngx_connectino_t 连接池](#ngx_connectino_t-连接池)
     - [核心模块 ngx_events_module](#核心模块-ngx_events_module)
         - [核心模块配置](#核心模块配置)
@@ -149,9 +149,99 @@ ngx_int_t ngx_handler_write_event(ngx_event_t *wev, size_t lowat);
 
 ## Nginx 的连接
 
+### 被动连接
+
+```c
+typedef struct ngx_connection_s ngx_connection_t;
+
+struct ngx_connection_s {
+    void                *data;              //
+    ngx_event_t         *read;              // 连接对应的读事件
+    ngx_event_t         *write;             // 连接对应的写事件
+
+    ngx_socket_t        fd;                 // 套接字句柄
+    ngx_recv_pt         recv;               // 直接接收网络字符流的方法
+    ngx_send_pt         send;               // 直接发送网络字符流的方法
+
+    ngx_recv_chain_pt   recv_chain;         // 以 ngx_chain_t 为参数来接受网络字符流的方法
+    ngx_send_chain_pt   send_chain;         // 以 ngx_chain_t 为参数来发送网络字符流的方法
+
+    ngx_listening_t     *listening;         // 连接对应的监听对象 此连接由该监听对象创建
+
+    off_t               sent;               // 这个连接上已经发送出去的字节数
+    ngx_log_t           *log;               // 可以记录日志的 ngx_log_t 对象
+
+    ngx_pool_t          *pool;              // 内存池，在 accept 一个新连接的时候，才会创建内存池
+
+    struct sockaddr     *sockaddr;          // 连接客户端的 sockaddr 结构体
+    socklen_t           socklen;            // sockaddr 结构体的长度
+    ngx_str_t           addr_text;          // 连接客户端字符串的 IP 地址
+
+    struct sockaddr     *local_sockaddr;    // 本机监听端口对应的 sockaddr listening 监听对象的 sockaddr 成员
+
+    // 用于接收、缓存客户端发来的字符流 每个使用连接的模块可自由决定从连接池中分配多大的空间给 buffer
+    // 对于 HTTP 模块，大小决定于 client_header_buffer_size
+    ngx_buf_t           *buffer;
+    ngx_queue_t         queue;              //
+
+    // 连接使用次数 因为连接是在池子中预分配的，当有客户端连接使用了该对象，number 会递增 或者主动向 upstream 发起连接
+    ngx_atomic_uint_t   number;
+
+    ngx_uint_t          requests;           // 处理请求的次数
+
+    unsigned            buffered:8;
+    unsigned            log_error:3;
+    unsigned            unexpected_eof:1;   //
+    unsigned            timedout:1          //
+    unsigned            error:1             //
+    unsigned            destroyed:1         //
+    unsigned            idle:1;             //
+    unsigned            resuable:1;         //
+    unsigned            close:1;            //
+    unsigned            sendfile:1;
+    unsigned            snadlowat:1;
+    unsigned            tcp_nodelay:2;
+    unsigned            tcp_nopush:2;
+};
+```
+
+很明显，连接的接收、发送方法可以不同，每个事件消费模块都可以灵活的决定行为（因为不同的 Even Loop 发送和接收调用不一样）。
+
 ### 主动连接
 
-### 被动连接
+Nginx 向 upstream 服务器主动发起连接，这样的连接被称为主动连接，用 `ngx_peer_connection_t` 结构体表示，该结构体是包装了 `ngx_connection_t`。
+
+```c
+typedef struct ngx_peer_connection_s ngx_peer_connection_t;
+
+// 当使用长连接于上游服务器通信时，可通过该方法由连接池中获取一个新连接
+typedef ngx_int_t (*ngx_event_get_peer_pt)(ngx_peer_connection_t *pc, void **data);
+
+// 当使用连接于上游服务器通信时，通过该方法将使用完毕的连接释放给连接池
+typedef void (*ngx_event_free_peer_pt)(ngx_peer_connection_t *pc, void *data, ngx_uint_t state);
+
+struct ngx_peer_connection_s {
+    ngx_connection_t            *connection;
+
+
+    struct sockaddr             *sockaddr;          // 远端服务器的 socket 地址
+    socklen_t                   socklen;            // socketaddr 地址的长度
+    ngx_str_t                   *name;              // 远端服务器的名称
+
+    ngx_uint_t                  tries;              // 当前连接出现异常失败后可以重试的次数 也就是允许的最多失败次数
+
+    ngx_event_get_peer_pt       get;                // 获取连接的方法，如果使用长连接构成的连接池，必须要实现 get 方法
+    ngx_event_free_peer_pt      free;               // 与 get 方法对应的释放连接的方法
+    void                        *data;
+
+    ngx_addr_t                  *local;             // 本机地址信息
+
+    int                         rcvbuf;             // 套接字接收缓冲区大小
+    ngx_log_t                   *log;               // 记录日志的 ngx_log_t 对象
+    unsigned                    cached:1;           //
+    unsigned                    log_error:2;
+};
+```
 
 ### ngx_connectino_t 连接池
 
@@ -244,7 +334,7 @@ ngx_cycle_t 中的 `void ****conf_ctx` 中保存了所有的配置项指针，�
 
 conf_ctx 数组指向了不同的核心模块，每个核心模块的配置指针又指向了所有子模块的配置项指针，其事件模块配置项内存结构如下：
 
-![](conf_ctx-memory.png)
+![](resource/conf_ctx-memory.png)
 
 对于事件模块而言，可以通过 `ngx_event_get_conf` 获得对应事件模块的配置：
 
@@ -670,7 +760,7 @@ ngx_thread_volatile ngx_event_t *ngx_posted_events;
 
 从之前的 ngx_epoll_module_ctx.ngx_event_actions_t.process_events 中可以看出，添加到 post 队列中要求传入的 flag 参数中有 NGX_POST_EVENT 标识位：
 
-```
+```c
 ...
 if (flags & NGX_POST_EVENTS) {
     queue = ...
