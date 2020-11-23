@@ -192,6 +192,123 @@ Worker 进程都处于 `ngx_worker_process_cycle(ngx_cycle_t)` 循环中循环�
 
 ## Nginx Master 工作流程
 
+Nginx 的 Master 进程不会处理网络事件和业务，只会通过信号对 worker 子进程进行管理，以实现重启服务、平滑升级、更换日志文件、重载配置文件等功能。
+
+Master 进程运行与函数 `ngx_master_process_cycle` 中，并会用 7 个标识位来控制具体的行为：
+
+```c
+sig_atomic_t  ngx_reap;           // 标识子进程意外结束。Master 进程接收信号 CHILD 触发。
+sig_atomic_t  ngx_terminate;      // 标识 Nginx 需要强制关闭。Master 进程接收信号 TERM/INT 触发。
+sig_atomic_t  ngx_quit;           // 标识 Nginx 需要优雅关闭。Master 进程接收信号 QUIT 触发。
+sig_atomic_t  ngx_reconfigure;    // 标识 Nginx 需要重新加载配置。Master 进程接收信号 HUP 触发。
+sig_atomic_t  ngx_reopen;         // 标识 Nginx 需要重新打开文件。Master 进程接收信号 USR1 触发。
+sig_atomic_t  ngx_change_binary;  // 标示 Nginx 需要重新打开二进制文件。Master 进程接收信号 USR2 触发。
+sig_atomic_t  ngx_noaccept;       // 标识 Nginx 子进程不再处理新的连接。相当于给所有的子进程发送 QUIT 信号。Master 进程接收信号 WINCH 触发。
+```
+
+热启动一个新的 Nginx 步骤如下：
+
+1. `kill -s USR2 ${nginx-master-pid}` 给 Nginx Master 进程的 PID 发送信号 USR2，用新的二进制文件新启动一个 Nginx Master-Worker。
+1. `kill -s WINCH ${nginx-master-pid}` 给 Nginx Master 进程的 PID 发送信号 WINCH（这里是给原 Nginx Master PID 发送信号），结束掉老的 Nginx Worker 进程。
+1. `kill -s QUIT ${nginx-master-pid}` 给 Nginx Master 进程的 PID 发送信号 QUIT（这里是给原 Nginx Master PID 发送信号），结束掉老的 Nginx Master 进程。
+
+之所以要把结束旧进程的 Worker 和 Master 分开，是为了便于观察新 Nginx 进程的工作是否满足预期，如果不满足预期，可以进行回滚。
+
+在关闭 Nginx Master 前，如果发现新二进制文件存在问题，可以进行回滚，步骤如下：
+
+1. `kill -s HUP ${ngx-master-pid}` 给 Nginx Master 进程的 PID 发送信号 HUP（老的 Nginx Master PID），重新加载配置文件，会触发恢复 Worker 进程。
+1. `kill -s QUIT ${new-nginx-master-pid}` 给 Nginx Master 进程的 PID 发送信号 QUIT（新的 Nginx Master PID），让新的 Nginx 退出。
+
+Master 管理子进程时用到了数据结构 `ngx_process_t`，具体如下:
+
+```c
+// 定义 1024 个元素的 ngx_process 数组。也就是最多只能有 1024 个子进程。
+#define NGX_MAX_PROCESSES 1024
+
+// 当前操作的进程在 ngx_processes 数组的下标
+ngx_int_t ngx_process_slot;
+
+// 存储所有子进程数组
+ngx_process_t ngx_processes[NGX_MAX_PROCESSES];
+
+typedef struct {
+    ngx_pid_t           pid;                // 进程 PID。
+    int                 status;             // 通过 waitpid 获得进程状态。
+
+    ngx_socket_t        channel[2];         // 通过 socketpair 生成的一组 socket，用于父子进程间通信。目前作用于 Master 和 Worker 的通信。
+
+    ngx_spawn_proc_pt   proc;               // 子进程循环执行的方法，父进程调用 ngx_spawn_process 生成进程时使用。
+    void                *data;              // ngx_spawn_proc_pt proc 进行调用时传入的上下文参数。
+
+    char                *name;              // 进程名称。
+
+    unsigned            respawn:1;          // 为 1 时，表示在重新生成子进程。
+    unsigned            just_spawn:1;       // 为 1 时，表示正在生成子进程。
+    unsigned            detached:1;         // 为 1 时，表示正在进行父子进程分离。
+    unsigned            exiting:1;          // 为 1 时，表示进程正在退出。
+    unsigned            exited:1;           // 为 1 时，表示进程已经退出。
+} ngx_process_t;
+```
+
+Master 进程通过 `ngx_spawn_process` 启动子进程，该函数中会进行 fork 的调用，并使用 ngx_prcoesses 中的一个未使用的对象存放该子进程的相关信息，如果 1024 个全部用尽，则会返回 NGX_INVALID_PID。
+
+```c
+ngx_pid_t ngx_spawn_process(ngx_cycle_t* cycle, ngx_spawn_proc_pt proc, void *data, char *name, ngx_int_t respawn);
+```
+
+参数 | 描述
+-|-
+cycle | ngx_cycle_t。
+proc | 启动子进程后，子进程会调用的函数。
+data | proc 中的 data 参数。
+name | 子进程名称。
+respawn | 不清楚。
+
+其中 `ngx_spawn_proc_pt` 指针结构如下：
+
+```c
+typedef void (*ngx_spawn_proc_pt)(ngx_cycle_t *cycle, void *data);
+```
+
+对于 Nginx 的 Worker 有一个统一的函数：
+
+```c
+static void ngx_worker_process_cycle(ngx_cycle_t *cycle, void *data);
+```
+
+对于缓存管理的子进程而言的：
+
+```c
+static void ngx_cache_manager_process_cycle(ngx_cycle_t *cycle, void *data);
+```
+
+下面简述 Nginx Master 进程处理步骤：
+
+1. Nginx Master 进程接收到信号，唤醒 Master 进程进行处理。
+1. ngx_reap 若为 1，则以为着有 Worker 进程意外死亡，Master 进程通过 `ngx_reap_children` 管理子进程，该函数中遍历子进程
+   - 对于非正常（ngx_terminate 和 ngx_quit 都为 0 时退出的子进程，认为时非正常退出）退出的子进程会进行拉起。
+   - 若所有子进程都退出了，返回 live 为 0，反之为 1。
+1. live 为 0 时，且 ngx_terminate 为 1 活 ngx_quit 为 1，表示所有子进程都正常退出了，开始调用 `ngx_master_process_exit` 退出 master 进程。
+   1. 删除进程号的 PID 文件。
+   1. 调用所有模块的 `ngx_master_process_exit` 方法。
+   1. 调用 `ngx_close_listening_sockets` 关闭进程中打开的监听端口。
+   1. 销毁内存池，退出 master 进程。
+1. 若 live 为 1，且 ngx_terminate 为 1，则认为要强制关闭 Nginx，Master 进程会给所有子进程发送 TERM 信号。回到第一步，等待 CHILD 信号激活。
+1. 若 live 为 1，且 ngx_quit 为 1，则认为要优雅关闭 Nginx，Master 进程关闭监听的端口，并会给所有子进程发送 QUIT 信号。回到第一步，等待 CHILD 信号激活。
+1. 若 ngx_reconfigure 为 1，表示要重新读取配置文件。Nginx 重新初始化 ngx_cycle_t 结构体，读取新的配置文件，拉起新的 Worker 进程，并销毁旧的 Worker 进程（QUIT 信号）。
+1. 若 ngx_restart 为 1，则重新拉起 worker 进程。
+1. 若 ngx_reopen 为 1，通过调用 `ngx_reopen_files` 方法，重新打开所有文件。
+1. 若 ngx_change_binary，用最新的二进制文件启动新的 Nginx 进程。
+1. 若 ngx_noaccept 为 1，则给所有子进程发出 QUIT 信号，并将 ngx_noaccepting 置为 1，表示 Nginx 停止接收新连接。
+
+**注意：**
+
+Nginx Master 并非一直循环处理，而是通过信号驱动，即接收到信号时才会被唤醒并处理：
+
+```sh
+sigsuspend(&set);
+```
+
 ## ngx_pool_t
 
 Nginx 内存池由 `ngx_pool_t` 表示：
