@@ -11,11 +11,20 @@
     - [subrequest](#subrequest)
     - [处理 HTTP 包体](#处理-http-包体)
         - [开始接收包体](#开始接收包体)
+        - [放弃接收包体](#放弃接收包体)
     - [发送 HTTP 响应](#发送-http-响应)
+        - [ngx_http_send_handler](#ngx_http_send_handler)
+        - [ngx_http_output_filter](#ngx_http_output_filter)
+        - [ngx_http_writer](#ngx_http_writer)
     - [结束 HTTP 请求](#结束-http-请求)
+        - [ngx_http_close_connection](#ngx_http_close_connection)
+        - [ngx_http_free_request](#ngx_http_free_request)
+        - [ngx_http_close_request](#ngx_http_close_request)
+        - [ngx_http_finalize_connection](#ngx_http_finalize_connection)
+        - [ngx_http_terminate_request](#ngx_http_terminate_request)
+        - [ngx_http_finalize_request](#ngx_http_finalize_request)
 
 <!-- /TOC -->
-
 
 ## 新建连接
 
@@ -262,13 +271,133 @@ typedef struct {
 
 `ngx_http_read_client_request_body` 的具体步骤：
 
-1. 原始请求的引用计数加 1。
-1. 如果包体为放弃，则直接回调 post_handler。
-1. 包体如果没有被分配过，则根据 content-length 分配包体大小。分配包体内存大小时需要依据 client_body_buffer_size，分配到 buf 字段中。
+1. 原始请求的引用计数加 1。在 post_handler 中一定要调用 `ngx_http_finalize_request` 去结束请求，否则引用技术始终无法清零，从而导致请求无法释放。
+1. 检查 `r->request_body` 是否分配过，如果包体为放弃或已经读取过 body，则直接回调 post_handler。
+1. 初始化 `r->request_body` 结构，并检查请求的 content-length。
+1. 如果 content-length 小于或等于 0，则直接回调 post_handler 方法。
 1. 检查接收 headers 时是否已经接收了 body，如果已经接收了 body，这些数据在 header_in 中。
-1. 设置 `r->read_event_handler` 为 ngx_http_read_client_body_handler，以反复接收 body。
+1. 如果 header_in 中已经接收到了全部包体，不用再接收，因此直接调用 post_handler。
+1. 如果 header_in 中未接收到全部包体，但是 header_in 的缓冲区中可以容纳足够的剩余包体（根据 content-length 判断），就不再分配包体内存。
+1. 如果 header_in 不能存放所有包体，则分配用于接收包体的缓冲区。缓冲区长度由 `client_body_buffer_size` 指定。
+1. 设置 `r->read_event_handler` 为 `ngx_http_read_client_body_handler`，以反复接收 body。
 1. 调用 `ngx_http_do_read_client_request_body` 读取 TCP 缓冲区中的数据。如果接收到完整请求会直接回调 post_handler。
+
+对于 `ngx_http_do_read_client_request_body` 用于读取 body 并放入缓冲区，整个流程都受定时器限制。
+
+1. 如果缓冲区已满，则将缓冲区写入到文件中。写入到文件中后，重置缓冲区，这样缓冲区就能重复使用了。
+1. 调用 recv 从 Socket 中读取包体到缓冲区。如果 recv 错误，则关闭连接，设置 error 标志位为 1，返回错误码 NGX_HTTP_BAD_REQUEST。
+1. 根据从 recv 中获取到的数据，更新相关属性，例如 r->request_body->reset 更新剩余未读的字节数，r->request_length 已接收的 body 大小等。
+1. 如果数据没有接收完，则添加定时器，将读事件添加到 epoll 中等待再次读取 body。
+1. 如果数据读完，则删除定时器，并重置 `r->read_event_handler` 为 `ngx_http_block_reading`。执行 post_handler 回调。
+
+在缓冲区可读时，会触发 `r->read_event_handler` 方法， 此时调用的方法是 `ngx_http_read_client_request_body_handler`，该方法的步骤为：
+
+1. 读事件超时，调用 `ngx_http_finalize_request`，结束请求并发 408 响应。
+1. 读事件未超时，调用 `ngx_http_do_read_client_request_body` 接收包体。
+
+### 放弃接收包体
+
+调用特定的函数放弃接收包体：
+
+```c
+ngx_int_t ngx_http_discard_request_body(ngx_http_request *r);
+```
+
+在该函数中丢弃包体会给引用计数加 1，当包体丢弃完毕会将引用计数减 1（通过调用 `ngx_http_finalize_request`）。
+
+`ngx_http_discard_request_body` 执行步骤如下：
+
+1. 检查请求是否为子请求，如果是子请求则直接返回 NGX_OK，因为子请求实际上是调用内部的函数，不会有网络 io。
+1. 移除读事件定时器，这是因为丢弃包体的操作不需要考虑超时（linger_timer 例外）。
+1. 请求头的 Content-Length 为 0，表示没有包体，直接返回 NGX_OK。
+1. 是否在接收 Header 时已经接收了完整包体，如果是，则直接返回 NGX_OK。
+1. 需要反复读取包体进行丢弃，因此设置读回调为 `ngx_http_discarded_request_body_handler`，并添加到 epoll 中。
+1. 主动调用 `ngx_http_read_discarded_request_body`，如果已经丢弃完成，则直接返回 NGX_OK。
+1. 如果没有丢弃完成，则需要反复丢弃，设置 count 引用计数加一。
+
+在 `ngx_http_read_discarded_request_body` 进行包体的接收和丢弃。
+
+1. 判断丢弃的包体个数是否已经打到了 content-length 长度，如果已经丢弃完毕则设置 `r->read_event_handler=ngx_http_block_reading`。
+1. 如果到 Socket 没有可读的内容，直接返回 NGX_AGAIN 等待进一步处理。
+1. 由 TCP 连接的套接字缓冲区读取请求包体。
+1. 如果需要继续读取，则返回 NGX_AGAIN。如果客户端关闭了连接，也会返回 NGX_OK，告诉调用方不用再丢弃了。
+1. 接收到包体后，更新 r->content_length_n，记录丢弃了多少包体。
+
+若一次没有将包体丢弃完，会调用 `ngx_http_discarded_request_body_handler` 方法，该方法主要步骤就三步：
+
+1. 调用 `ngx_http_read_discarded_request_body` 丢弃包体。
+1. 包体丢弃成功，调用 `ngx_http_finalize_request` 将引用计数减一。
+1. 包体还需要继续丢弃，则将 `ngx_http_discarded_request_body_handler` 重新放入 epoll 事件循环。
 
 ## 发送 HTTP 响应
 
+发送 HTTP 响应有两个方面：
+
+- 通过 `ngx_http_send_header` 发送响应头。
+- 通过 `ngx_http_output_filter` 发送响应包体。
+
+Nginx 响应发送时，经常会由于响应包体过大，导致无法一次发送，进而会一次有一次的触发写事件回调来不停的发送。进行发送的函数是 `ngx_http_writer` 方法。
+
+**注意：**
+
+- 因为 Nginx 认为开始发送响应意味着请求的结束，因此不需要发送响应完成的回调函数。
+- 在调用 `ngx_http_output_filter` 方法进行响应 body 后，需要调用 `ngx_http_finalize_request` 方法，因为该方法会将 r->write_event_handler 设置为 ngx_http_writer，以支持将没有发送完的响应进行发送。
+
+### ngx_http_send_handler
+
+`ngx_http_send_handler` 用于发送响应头，其工作步骤主要就是两个步骤：
+
+1. 依次调用各个过滤模块。
+1. 最后一个过滤模块（ngx_header_filter）负责将 headers_out 中的成员变量序列化为字符串并发送出去。
+
+当然 ngx_header_filter 可能无法一次发送完所有的响应头，未发送的部分将会保存在 r->out 中，并且会返回 `NGX_AGAIN` ，调用 `ngx_http_finalize_request` 方法传入该 NGX_AGAIN，Nginx 就了解还有头没有发送完，将会设置 `r->writer_event_hanlder=ngx_http_writer` 用以发送 `r->out` 中的剩余部分。
+
+1. 检查 `r->header_sent` 标志位，如果位 1 则说明这个请求响应头已经发送过了，无需再次发送，直接返回 NGX_OK。
+1. 如果没有发送过响应头，首先把 `r->header_sent=1`。
+1. 判断是否为子请求，如果是子请求，则不存在发送 header 的 IO 动作，直接返回 NGX_OK。
+1. 判断 HTTP 版本是否小于 1.0，如果小于 1.0 则不需要 HTTP 请求头。
+1. 计算序列化响应头的字节长度，并在内存池中分配缓冲区。
+1. 将响应行、头部按照 HTTP 的规范序列化复制到缓冲区中。
+1. 将缓冲区作为参数调用 `ngx_http_write_filter` 方法，将响应头发送出去。
+
+**注意：**
+
+- `ngx_http_write_filter` 如果不能发送完缓冲区的全部内容，会返回 NGX_OK，同时将未发送的部分放到 r->out 中。
+- 当 `ngx_http_send_handler` 通过 `ngx_http_write_filter` 不能完全发送内容，则会通过 `ngx_http_finalize_request` 来将 `ngx_http_writer` 设置到 `r->write_event_handler`。
+
+### ngx_http_output_filter
+
+通过 `ngx_http_send_headers` 类似，在调用 `ngx_http_output_fitler` 时，会一次调用所有的过滤模块处理包体，最后一个模块是 `ngx_http_write_filter_module` 其处理方法 `ngx_http_write_filter` 会将数据发送至客户端。
+
+### ngx_http_writer
+
+无论是 ngx_http_send_handler 还是 ngx_http_output_filter 都无法将响应发送完，最后都是通过触发可写事件，回调 `ngx_http_writer` 来进行剩余数据的发送。
+
+ngx_http_writer 的主要步骤如下：
+
+1. 检查是否写事件超时，如果超时可能是有两种原因导致：
+   1. 网络异常和客户端不接收响应导致，是真实的网络超时，此时结束请求并返回 408 响应码。
+   1. 由于上一次发送响应时过快，由限速导致超时（通过 event 的 delayed 标志位判断），并将 delayed 和 timedout 标志位置为 0。
+1. 若数据没有准备好，将写事件添加到定时器（超时时间为 `send_timeout`），并将写时间重新放入 epoll 中，等待再次调用。
+1. 若数据已经准备好，调用 `ngx_http_output_filter` 方法发送响应。
+1. out 缓冲区数据没有发送完成，则将写事件添加到定时器（超时时间为 `send_timeout`），并将写时间重新放入 epoll 中，等待再次调用。
+1. out 缓冲区数据发送完成，重置 `r->write_event_handler` 为 `ngx_http_request_empty_handler`。
+1. 调用 `ngx_http_finalize_request` 结束请求。
+
 ## 结束 HTTP 请求
+
+Nginx 的一个请求可能会被多个事件触发，当事件依赖某个请求行后，在事件结束后应该销毁掉请求，但是请求可能也被其他事件所依赖，因此并不能简单的去销毁请求。
+
+对于 Nginx，每一个请求都有一个引用计数，每派生一种独立的事件时，都会把引用计数加 1，这样每个事件的动作结束的时候都可以通过 `ngx_http_finalize_request` 结束请求。ngx_http_finalize_request 会对引用计数减一，并在值为 0 时，销毁掉请求
+
+### ngx_http_close_connection
+
+### ngx_http_free_request
+
+### ngx_http_close_request
+
+### ngx_http_finalize_connection
+
+### ngx_http_terminate_request
+
+### ngx_http_finalize_request
